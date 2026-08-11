@@ -5,6 +5,7 @@ import {
   useState,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
+  type RefObject,
 } from 'react'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import { loadPdfDocument, getPageTextBoxes } from '@/lib/pdf'
@@ -134,7 +135,6 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
 
   const handleClick = useCallback(
     (e: ReactMouseEvent) => {
-      if (readerTool === 'pen') return
       // 드래그로 텍스트를 선택한 직후의 클릭은 선택 메뉴가 처리한다
       const sel = window.getSelection()
       if (sel && !sel.isCollapsed && sel.toString().trim()) return
@@ -142,7 +142,7 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
       const hit = hitTestHighlight(e.target as Element, e.clientX, e.clientY)
       setEditing(hit ? { id: hit.id, x: e.clientX, y: e.clientY + 16 } : null)
     },
-    [hitTestHighlight, readerTool],
+    [hitTestHighlight],
   )
 
   useEffect(() => {
@@ -179,7 +179,6 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
   }, [editing, highlights])
 
   const captureSelection = useCallback(() => {
-    if (readerTool === 'pen') return
     const sel = window.getSelection()
     if (!sel || sel.isCollapsed || !sel.rangeCount) {
       setSelection(null)
@@ -210,7 +209,9 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
     const last = clientRects[clientRects.length - 1]
     setSelection({ text, pageIndex, rects })
     setSelMenu({ x: last.right, y: last.bottom + 8 })
-  }, [readerTool])
+    // 새로 고른 텍스트가 있으면 열려 있던 편집 메뉴는 비켜준다
+    setEditing(null)
+  }, [])
 
   const applyHighlight = async () => {
     if (!selection) return
@@ -293,7 +294,7 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
         </div>
         <span className="pdf-hint">
           {readerTool === 'pen'
-            ? 'S펜/스타일러스 압력 반영 · 손가락은 스크롤'
+            ? 'S펜 압력 필기 · 손가락으로 넘기기 · 펜 버튼 누르고 긋거나 손가락 길게 누르면 선택'
             : '텍스트 드래그 → 하이라이트'}
         </span>
       </div>
@@ -316,6 +317,8 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
             projectId={projectId}
             penEnabled={readerTool === 'pen'}
             penColor={penColor}
+            scrollRef={containerRef}
+            onSelectionEnd={captureSelection}
             highlights={(highlights ?? []).filter((h) => h.pageIndex === i)}
             activeHighlightId={activeHighlightId}
             onRendered={() => anchorPort?.invalidate()}
@@ -323,7 +326,7 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
         ))}
       </div>
 
-      {selMenu && selection && readerTool === 'highlight' && (
+      {selMenu && selection && (
         <div
           className="sel-menu"
           style={{ left: selMenu.x, top: selMenu.y }}
@@ -372,6 +375,8 @@ function PdfPage({
   projectId,
   penEnabled,
   penColor,
+  scrollRef,
+  onSelectionEnd,
   activeHighlightId,
   onRendered,
 }: {
@@ -383,6 +388,8 @@ function PdfPage({
   projectId: string
   penEnabled: boolean
   penColor: string
+  scrollRef: RefObject<HTMLDivElement | null>
+  onSelectionEnd: () => void
   activeHighlightId: string | null
   onRendered: () => void
 }) {
@@ -462,13 +469,15 @@ function PdfPage({
           )),
         )}
       </div>
-      <div className="text-layer" ref={textRef} style={{ pointerEvents: penEnabled ? 'none' : undefined }} />
+      <div className="text-layer" ref={textRef} />
       <PenOverlay
         documentId={documentId}
         projectId={projectId}
         pageIndex={pageIndex}
         enabled={penEnabled}
         color={penColor}
+        scrollRef={scrollRef}
+        onSelectionEnd={onSelectionEnd}
       />
     </div>
   )
