@@ -1,10 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type TouchEvent as ReactTouchEvent,
-} from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import ePub, { type Book, type Contents, type NavItem, type Rendition } from 'epubjs'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/lib/db'
@@ -43,6 +37,18 @@ interface EpubLocation {
 
 const HL_CLASS = 'readlink-hl'
 
+/** 탭/스와이프 판정 기준 — 드래그(텍스트 선택)와 구분하기 위한 값 */
+const TAP_MAX_MOVE_PX = 10
+const TAP_MAX_MS = 400
+const SWIPE_MIN_PX = 60
+
+/** 좌우 가장자리 탭 영역 폭 */
+function edgeZoneWidth(viewportWidth: number): number {
+  return viewportWidth < 640
+    ? Math.min(72, viewportWidth * 0.18)
+    : Math.min(88, viewportWidth * 0.12)
+}
+
 async function readLocation(rendition: Rendition): Promise<EpubLocation | null> {
   try {
     const loc = rendition.currentLocation() as unknown as
@@ -71,7 +77,7 @@ export function EpubViewer({ documentId, projectId, workspaceId }: Props) {
   const appliedRef = useRef<Map<string, HighlightColor>>(new Map())
   const initTokenRef = useRef(0)
   const fontScaleRef = useRef(100)
-  const touchStartRef = useRef<{ x: number; y: number } | null>(null)
+  const selectionRef = useRef<SelectionPayload | null>(null)
 
   const [loading, setLoading] = useState(true)
   const [ready, setReady] = useState(false)
@@ -96,6 +102,7 @@ export function EpubViewer({ documentId, projectId, workspaceId }: Props) {
   )
 
   fontScaleRef.current = fontScale
+  selectionRef.current = selection
 
   /*
    * epubjs 의 displayed.total 은 마지막 섹션에서 한 페이지 더 많게 나오는 경우가 있어
@@ -130,6 +137,81 @@ export function EpubViewer({ documentId, projectId, workspaceId }: Props) {
       // ignore
     }
   }, [])
+
+  /*
+   * 페이지 넘김 제스처를 본문 문서 안에서 직접 처리한다.
+   * 본문 위에 겹친 버튼으로 처리하면 그 영역에서 드래그를 시작할 수 없어
+   * 가장자리 근처의 텍스트를 하이라이트할 수 없다.
+   */
+  const bindContentGestures = useCallback(
+    (doc: Document) => {
+      doc.addEventListener('keydown', (e: KeyboardEvent) => {
+        if (e.key === 'ArrowRight' || e.key === 'PageDown') void goNext()
+        else if (e.key === 'ArrowLeft' || e.key === 'PageUp') void goPrev()
+      })
+
+      let from: { x: number; y: number; at: number; pointerId: number } | null = null
+
+      doc.addEventListener('pointerdown', (e: PointerEvent) => {
+        from =
+          e.isPrimary && e.button === 0
+            ? { x: e.clientX, y: e.clientY, at: performance.now(), pointerId: e.pointerId }
+            : null
+      })
+
+      doc.addEventListener('pointercancel', () => {
+        from = null
+      })
+
+      doc.addEventListener('pointerup', (e: PointerEvent) => {
+        const origin = from
+        from = null
+        if (!origin || e.pointerId !== origin.pointerId) return
+
+        // 본문 내부 링크는 epubjs 가 처리하도록 둔다
+        if ((e.target as Element | null)?.closest?.('a')) return
+
+        // 드래그로 텍스트를 선택했다면 페이지를 넘기지 않는다
+        const selected = doc.defaultView?.getSelection()
+        if (selected && !selected.isCollapsed && selected.toString().trim()) return
+
+        const dx = e.clientX - origin.x
+        const dy = e.clientY - origin.y
+
+        if (Math.abs(dx) >= SWIPE_MIN_PX && Math.abs(dx) > Math.abs(dy)) {
+          if (dx < 0) void goNext()
+          else void goPrev()
+          return
+        }
+
+        const moved = Math.hypot(dx, dy)
+        if (moved > TAP_MAX_MOVE_PX || performance.now() - origin.at > TAP_MAX_MS) return
+
+        // 하이라이트 메뉴가 열려 있으면 첫 탭은 메뉴만 닫는다
+        if (selectionRef.current) {
+          setSelection(null)
+          setSelMenu(null)
+          return
+        }
+
+        /*
+         * 페이지 방식에서 iframe 은 전체 컬럼을 담을 만큼 넓고 좌우로 스크롤되므로
+         * iframe 기준 clientX 를 화면에 보이는 위치로 환산해야 한다.
+         */
+        const frame = doc.defaultView?.frameElement as HTMLElement | null
+        const mount = viewerRef.current
+        if (!frame || !mount) return
+        const mountRect = mount.getBoundingClientRect()
+        if (mountRect.width < 1) return
+
+        const visibleX = frame.getBoundingClientRect().left + e.clientX - mountRect.left
+        const zone = edgeZoneWidth(mountRect.width)
+        if (visibleX <= zone) void goPrev()
+        else if (visibleX >= mountRect.width - zone) void goNext()
+      })
+    },
+    [goNext, goPrev],
+  )
 
   /** DB 상태와 rendition 주석을 동기화 (추가/삭제/색상 변경 반영) */
   const syncAnnotations = useCallback(() => {
@@ -250,7 +332,7 @@ export function EpubViewer({ documentId, projectId, workspaceId }: Props) {
     let rendition: Rendition | null = null
     let observer: ResizeObserver | null = null
     let rafId = 0
-    const keyedDocs = new WeakSet<Document>()
+    const boundDocs = new WeakSet<Document>()
 
     const destroyLocal = () => {
       if (rafId) cancelAnimationFrame(rafId)
@@ -365,7 +447,7 @@ export function EpubViewer({ documentId, projectId, workspaceId }: Props) {
           }
         })
 
-        // iframe 안에 포커스가 있을 때도 방향키로 넘길 수 있게
+        // 새로 렌더된 본문마다 키보드·탭·스와이프 처리를 연결
         rendition.on('rendered', () => {
           if (!alive()) return
           try {
@@ -375,12 +457,9 @@ export function EpubViewer({ documentId, projectId, workspaceId }: Props) {
             ) as Contents[]
             for (const c of list) {
               const doc = c.document
-              if (!doc || keyedDocs.has(doc)) continue
-              keyedDocs.add(doc)
-              doc.addEventListener('keydown', (e: KeyboardEvent) => {
-                if (e.key === 'ArrowRight' || e.key === 'PageDown') void goNext()
-                else if (e.key === 'ArrowLeft' || e.key === 'PageUp') void goPrev()
-              })
+              if (!doc || boundDocs.has(doc)) continue
+              boundDocs.add(doc)
+              bindContentGestures(doc)
             }
           } catch {
             // ignore
@@ -459,7 +538,7 @@ export function EpubViewer({ documentId, projectId, workspaceId }: Props) {
         renditionRef.current = null
       }
     }
-  }, [documentId, goNext, goPrev, syncAnnotations, updateLocation])
+  }, [documentId, bindContentGestures, syncAnnotations, updateLocation])
 
   useEffect(() => {
     if (!ready) return
@@ -513,22 +592,6 @@ export function EpubViewer({ documentId, projectId, workspaceId }: Props) {
     setSelection(null)
     setSelMenu(null)
     // 실제 렌더링은 highlights 구독 → syncAnnotations 에서 처리
-  }
-
-  const onTouchStart = (e: ReactTouchEvent) => {
-    if (e.touches.length !== 1) return
-    touchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
-  }
-
-  const onTouchEnd = (e: ReactTouchEvent) => {
-    const start = touchStartRef.current
-    touchStartRef.current = null
-    if (!start || e.changedTouches.length !== 1) return
-    const dx = e.changedTouches[0].clientX - start.x
-    const dy = e.changedTouches[0].clientY - start.y
-    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy)) return
-    if (dx < 0) void goNext()
-    else void goPrev()
   }
 
   return (
@@ -597,7 +660,7 @@ export function EpubViewer({ documentId, projectId, workspaceId }: Props) {
             ))}
           </select>
         )}
-        <span className="epub-hint">←→ / 스와이프 / 가장자리 탭</span>
+        <span className="epub-hint">←→ / 스와이프 / 좌우 가장자리 탭 · 드래그는 선택</span>
       </div>
 
       <div className="epub-progress" aria-hidden>
@@ -607,22 +670,8 @@ export function EpubViewer({ documentId, projectId, workspaceId }: Props) {
       {loading && <div className="epub-status">EPUB 불러오는 중…</div>}
       {error && <div className="epub-status error">{error}</div>}
 
-      <div className="epub-stage" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
-        <button
-          type="button"
-          className="epub-edge epub-edge-prev"
-          aria-label="이전 페이지"
-          disabled={!ready || atStart}
-          onClick={() => void goPrev()}
-        />
+      <div className="epub-stage">
         <div className="epub-frame" ref={viewerRef} />
-        <button
-          type="button"
-          className="epub-edge epub-edge-next"
-          aria-label="다음 페이지"
-          disabled={!ready || atEnd}
-          onClick={() => void goNext()}
-        />
       </div>
 
       {selMenu && selection && (

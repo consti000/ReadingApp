@@ -85,39 +85,6 @@
   pointer-events: none;
 }
 
-.epub-edge {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 12%;
-  max-width: 88px;
-  z-index: 3;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  padding: 0;
-}
-
-.epub-edge:disabled {
-  cursor: default;
-}
-
-.epub-edge-prev {
-  left: 0;
-}
-
-.epub-edge-next {
-  right: 0;
-}
-
-.epub-edge-prev:not(:disabled):hover {
-  background: linear-gradient(90deg, rgba(196, 165, 116, 0.12), transparent);
-}
-
-.epub-edge-next:not(:disabled):hover {
-  background: linear-gradient(270deg, rgba(196, 165, 116, 0.12), transparent);
-}
-
 .epub-status {
   position: absolute;
   inset: 52px 0 0;
@@ -135,10 +102,5 @@
 @media (max-width: 640px) {
   .epub-hint {
     display: none;
-  }
-
-  .epub-edge {
-    width: 18%;
-    max-width: 72px;
   }
 }
