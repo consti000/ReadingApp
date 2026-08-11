@@ -12,6 +12,9 @@ interface UiState {
   setReaderTool: (t: ReaderTool) => void
   pendingJump: { documentId: string; highlightId: string } | null
   setPendingJump: (j: { documentId: string; highlightId: string } | null) => void
+  /** 카드↔본문 연결선을 강조할 대상 */
+  activeHighlightId: string | null
+  setActiveHighlightId: (id: string | null) => void
   sidebarOpen: boolean
   setSidebarOpen: (v: boolean) => void
 }
@@ -25,6 +28,8 @@ export const useUiStore = create<UiState>((set) => ({
   setReaderTool: (readerTool) => set({ readerTool }),
   pendingJump: null,
   setPendingJump: (pendingJump) => set({ pendingJump }),
+  activeHighlightId: null,
+  setActiveHighlightId: (activeHighlightId) => set({ activeHighlightId }),
   sidebarOpen: true,
   setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
 }))

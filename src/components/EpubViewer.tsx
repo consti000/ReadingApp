@@ -3,8 +3,15 @@ import ePub, { type Book, type Contents, type NavItem, type Rendition } from 'ep
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/lib/db'
 import { loadDocument } from '@/lib/opfs'
-import { createHighlight, addNodeToWorkspace } from '@/lib/actions'
+import {
+  createHighlight,
+  addNodeToWorkspace,
+  updateHighlightColor,
+  deleteHighlight,
+} from '@/lib/actions'
 import { useUiStore } from '@/store/uiStore'
+import { HighlightEditMenu } from '@/components/HighlightEditMenu'
+import type { AnchorPort, HighlightAnchor } from '@/lib/highlightAnchors'
 import { HIGHLIGHT_COLORS, type Highlight, type HighlightColor } from '@/types'
 import './EpubViewer.css'
 
@@ -12,6 +19,8 @@ interface Props {
   documentId: string
   projectId: string
   workspaceId?: string
+  /** 리더 화면이 연결선을 그릴 때 쓰는 좌표 통로 */
+  anchorPort?: AnchorPort
 }
 
 interface SelectionPayload {
@@ -68,7 +77,7 @@ async function waitForSize(el: HTMLElement, timeoutMs = 3000): Promise<void> {
   }
 }
 
-export function EpubViewer({ documentId, projectId, workspaceId }: Props) {
+export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: Props) {
   const viewerRef = useRef<HTMLDivElement>(null)
   const bookRef = useRef<Book | null>(null)
   const renditionRef = useRef<Rendition | null>(null)
@@ -78,6 +87,8 @@ export function EpubViewer({ documentId, projectId, workspaceId }: Props) {
   const initTokenRef = useRef(0)
   const fontScaleRef = useRef(100)
   const selectionRef = useRef<SelectionPayload | null>(null)
+  const editingRef = useRef<{ id: string; x: number; y: number } | null>(null)
+  const anchorPortRef = useRef<AnchorPort | undefined>(undefined)
 
   const [loading, setLoading] = useState(true)
   const [ready, setReady] = useState(false)
@@ -89,6 +100,7 @@ export function EpubViewer({ documentId, projectId, workspaceId }: Props) {
   const [atEnd, setAtEnd] = useState(false)
   const [selection, setSelection] = useState<SelectionPayload | null>(null)
   const [selMenu, setSelMenu] = useState<{ x: number; y: number } | null>(null)
+  const [editing, setEditing] = useState<{ id: string; x: number; y: number } | null>(null)
   const [fontScale, setFontScale] = useState(100)
 
   const highlightColor = useUiStore((s) => s.highlightColor)
@@ -103,6 +115,8 @@ export function EpubViewer({ documentId, projectId, workspaceId }: Props) {
 
   fontScaleRef.current = fontScale
   selectionRef.current = selection
+  editingRef.current = editing
+  anchorPortRef.current = anchorPort
 
   /*
    * epubjs 의 displayed.total 은 마지막 섹션에서 한 페이지 더 많게 나오는 경우가 있어
@@ -126,17 +140,53 @@ export function EpubViewer({ documentId, projectId, workspaceId }: Props) {
     if (before && after && before === after) setAtEnd(true)
   }, [])
 
-  const clearFrameSelection = useCallback(() => {
+  /** getContents() 는 단일 값과 배열을 모두 돌려줘 형태를 맞춰 쓴다 */
+  const getContentsList = useCallback((): Contents[] => {
     try {
       const contents = renditionRef.current?.getContents()
-      const list = (
-        Array.isArray(contents) ? contents : contents ? [contents] : []
-      ) as Contents[]
-      for (const c of list) c.window?.getSelection()?.removeAllRanges()
+      return (Array.isArray(contents) ? contents : contents ? [contents] : []) as Contents[]
     } catch {
-      // ignore
+      return []
     }
   }, [])
+
+  const clearFrameSelection = useCallback(() => {
+    for (const c of getContentsList()) {
+      try {
+        c.window?.getSelection()?.removeAllRanges()
+      } catch {
+        // ignore
+      }
+    }
+  }, [getContentsList])
+
+  /*
+   * 하이라이트는 iframe 위에 겹친 SVG 라 클릭을 받지 않는다(받으면 텍스트 선택이 막힌다).
+   * 대신 저장된 CFI 를 본문 Range 로 되돌려 탭 좌표가 그 안에 드는지 본다.
+   */
+  const hitTestHighlight = useCallback(
+    (doc: Document, x: number, y: number): string | null => {
+      const contents = getContentsList().find((c) => c.document === doc)
+      if (!contents) return null
+
+      const ordered = [...highlightsRef.current].sort((a, b) => a.createdAt - b.createdAt)
+      for (let i = ordered.length - 1; i >= 0; i -= 1) {
+        const h = ordered[i]
+        if (!h.cfi) continue
+        try {
+          const range = contents.range(h.cfi)
+          if (!range) continue
+          for (const r of range.getClientRects()) {
+            if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return h.id
+          }
+        } catch {
+          // 잘못된 CFI는 건너뜀
+        }
+      }
+      return null
+    },
+    [getContentsList],
+  )
 
   /*
    * 페이지 넘김 제스처를 본문 문서 안에서 직접 처리한다.
@@ -187,10 +237,11 @@ export function EpubViewer({ documentId, projectId, workspaceId }: Props) {
         const moved = Math.hypot(dx, dy)
         if (moved > TAP_MAX_MOVE_PX || performance.now() - origin.at > TAP_MAX_MS) return
 
-        // 하이라이트 메뉴가 열려 있으면 첫 탭은 메뉴만 닫는다
-        if (selectionRef.current) {
+        // 열려 있는 메뉴가 있으면 첫 탭은 메뉴만 닫는다
+        if (selectionRef.current || editingRef.current) {
           setSelection(null)
           setSelMenu(null)
+          setEditing(null)
           return
         }
 
@@ -203,14 +254,26 @@ export function EpubViewer({ documentId, projectId, workspaceId }: Props) {
         if (!frame || !mount) return
         const mountRect = mount.getBoundingClientRect()
         if (mountRect.width < 1) return
+        const frameRect = frame.getBoundingClientRect()
 
-        const visibleX = frame.getBoundingClientRect().left + e.clientX - mountRect.left
+        // 기존 하이라이트를 탭하면 페이지를 넘기지 않고 편집 메뉴를 띄운다
+        const hitId = hitTestHighlight(doc, e.clientX, e.clientY)
+        if (hitId) {
+          setEditing({
+            id: hitId,
+            x: frameRect.left + e.clientX,
+            y: frameRect.top + e.clientY + 16,
+          })
+          return
+        }
+
+        const visibleX = frameRect.left + e.clientX - mountRect.left
         const zone = edgeZoneWidth(mountRect.width)
         if (visibleX <= zone) void goPrev()
         else if (visibleX >= mountRect.width - zone) void goNext()
       })
     },
-    [goNext, goPrev],
+    [goNext, goPrev, hitTestHighlight],
   )
 
   /** DB 상태와 rendition 주석을 동기화 (추가/삭제/색상 변경 반영) */
@@ -316,12 +379,56 @@ export function EpubViewer({ documentId, projectId, workspaceId }: Props) {
         // ignore
       }
     }
+    anchorPortRef.current?.invalidate()
   }, [])
 
   useEffect(() => {
     highlightsRef.current = highlights ?? []
     syncAnnotations()
-  }, [highlights, syncAnnotations])
+    anchorPort?.invalidate()
+  }, [highlights, syncAnnotations, anchorPort])
+
+  useEffect(() => {
+    if (editing && highlights && !highlights.some((h) => h.id === editing.id)) setEditing(null)
+  }, [editing, highlights])
+
+  useEffect(() => {
+    if (!anchorPort) return
+    anchorPort.register(() => {
+      const mount = viewerRef.current
+      if (!mount) return null
+      const clip = mount.getBoundingClientRect()
+      if (clip.width < 1 || clip.height < 1) return null
+
+      const anchors = new Map<string, HighlightAnchor>()
+      for (const contents of getContentsList()) {
+        const frame = contents.document?.defaultView?.frameElement as HTMLElement | null
+        if (!frame) continue
+        const frameRect = frame.getBoundingClientRect()
+
+        for (const h of highlightsRef.current) {
+          if (!h.cfi) continue
+          try {
+            const range = contents.range(h.cfi)
+            if (!range) continue
+            let best: HighlightAnchor | null = null
+            for (const r of range.getClientRects()) {
+              const x = frameRect.left + r.right
+              const y = frameRect.top + r.top + r.height / 2
+              // 페이지 방식에서는 화면 밖 컬럼도 좌표를 갖는다 → 보이는 영역만 남긴다
+              if (x < clip.left || x > clip.right || y < clip.top || y > clip.bottom) continue
+              if (!best || y > best.y) best = { x, y }
+            }
+            if (best) anchors.set(h.id, best)
+          } catch {
+            // 잘못된 CFI는 건너뜀
+          }
+        }
+      }
+      return { clip, anchors }
+    })
+    return () => anchorPort.register(null)
+  }, [anchorPort, getContentsList])
 
   useEffect(() => {
     const token = ++initTokenRef.current
@@ -413,6 +520,8 @@ export function EpubViewer({ documentId, projectId, workspaceId }: Props) {
           updateLocation(loc)
           setSelection(null)
           setSelMenu(null)
+          setEditing(null)
+          anchorPortRef.current?.invalidate()
         })
 
         rendition.on('selected', (cfiRange: string, contents: Contents) => {
@@ -461,6 +570,7 @@ export function EpubViewer({ documentId, projectId, workspaceId }: Props) {
               boundDocs.add(doc)
               bindContentGestures(doc)
             }
+            anchorPortRef.current?.invalidate()
           } catch {
             // ignore
           }
@@ -498,6 +608,7 @@ export function EpubViewer({ documentId, projectId, workspaceId }: Props) {
             } catch {
               // ignore
             }
+            anchorPortRef.current?.invalidate()
           })
         })
         observer.observe(mount)
@@ -690,6 +801,20 @@ export function EpubViewer({ documentId, projectId, workspaceId }: Props) {
             취소
           </button>
         </div>
+      )}
+
+      {editing && (
+        <HighlightEditMenu
+          x={editing.x}
+          y={editing.y}
+          color={highlights?.find((h) => h.id === editing.id)?.color ?? 'yellow'}
+          onPick={(c) => void updateHighlightColor(editing.id, c)}
+          onDelete={() => {
+            void deleteHighlight(editing.id)
+            setEditing(null)
+          }}
+          onClose={() => setEditing(null)}
+        />
       )}
     </div>
   )

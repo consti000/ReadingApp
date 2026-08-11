@@ -16,24 +16,6 @@
   flex-wrap: wrap;
 }
 
-.color-row {
-  display: flex;
-  gap: 0.35rem;
-}
-
-.color-dot {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  border: 2px solid transparent;
-  padding: 0;
-}
-
-.color-dot.active {
-  border-color: #fff;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
-}
-
 .zoom-row {
   display: flex;
   align-items: center;
@@ -81,6 +63,11 @@
   opacity: 0.4;
   mix-blend-mode: multiply;
   border-radius: 1px;
+  transition: opacity 0.12s ease;
+}
+
+.hl-rect.active {
+  opacity: 0.75;
 }
 
 .text-layer {

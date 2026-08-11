@@ -21,9 +21,29 @@
 }
 
 .read-body {
+  position: relative;
   display: grid;
   grid-template-columns: 1fr minmax(200px, 280px);
   min-height: 0;
+}
+
+/* 카드와 원문을 잇는 실선 — 본문 위에 얹되 조작은 막지 않는다 */
+.hl-connectors {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.hl-connectors g {
+  opacity: 0.45;
+  transition: opacity 0.12s ease;
+}
+
+.hl-connectors g.active {
+  opacity: 1;
 }
 
 .read-pdf {
@@ -65,22 +85,63 @@
   border-radius: var(--radius-sm);
   background: var(--bg-elevated);
   border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  transition: border-color 0.12s ease, background 0.12s ease;
 }
 
-.hl-item p {
-  margin: 0 0 0.4rem;
+.hl-item.active {
+  background: var(--accent-soft);
+  border-color: var(--border-strong);
+}
+
+/* 카드 본문을 누르면 원문 위치로 이동 */
+.hl-item-text {
+  display: -webkit-box;
+  width: 100%;
+  margin: 0 0 0.45rem;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
   font-size: 0.85rem;
   line-height: 1.4;
-  display: -webkit-box;
+  text-align: left;
+  cursor: pointer;
   -webkit-line-clamp: 4;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+.hl-item-colors {
+  margin-bottom: 0.45rem;
+}
+
+.hl-item-colors .color-dot {
+  width: 15px;
+  height: 15px;
 }
 
 .hl-item-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 0.35rem;
+}
+
+.hl-item-buttons {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+}
+
+.hl-item-delete {
+  color: var(--danger);
+}
+
+.hl-item-delete:hover {
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 
 .page-badge {

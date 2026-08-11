@@ -170,6 +170,49 @@ export async function createHighlight(params: {
   return { highlightId, nodeId }
 }
 
+/** 하이라이트 색은 발췌 노드에도 그대로 반영해 카드·마인드맵 색과 어긋나지 않게 한다 */
+export async function updateHighlightColor(highlightId: string, color: HighlightColor) {
+  const now = Date.now()
+  await db.transaction('rw', [db.highlights, db.nodes], async () => {
+    const changed = await db.highlights.update(highlightId, { color, updatedAt: now })
+    if (!changed) return
+    const nodes = await db.nodes.where('sourceHighlightId').equals(highlightId).toArray()
+    for (const n of nodes) await db.nodes.update(n.id, { color, updatedAt: now })
+  })
+}
+
+/**
+ * 하이라이트를 지우면 그 발췌 노드를 참조하던 모든 뷰(워크스페이스 카드, 잉크 링크,
+ * 마인드맵 노드, 플래시카드)도 함께 정리한다. 마인드맵에서는 자식이 끊기지 않도록
+ * 지워지는 노드의 부모로 옮겨 붙인다.
+ */
+export async function deleteHighlight(highlightId: string) {
+  await db.transaction(
+    'rw',
+    [db.highlights, db.nodes, db.cardPlacements, db.inkLinks, db.mindMapNodes, db.flashcards],
+    async () => {
+      const nodes = await db.nodes.where('sourceHighlightId').equals(highlightId).toArray()
+      for (const n of nodes) {
+        await db.cardPlacements.where('nodeId').equals(n.id).delete()
+        await db.inkLinks.where('fromNodeId').equals(n.id).delete()
+        await db.inkLinks.where('toNodeId').equals(n.id).delete()
+        await db.flashcards.where('nodeId').equals(n.id).delete()
+
+        const mapNodes = await db.mindMapNodes.where('nodeId').equals(n.id).toArray()
+        for (const m of mapNodes) {
+          const children = await db.mindMapNodes.where('parentId').equals(m.id).toArray()
+          for (const c of children) {
+            await db.mindMapNodes.update(c.id, { parentId: m.parentId })
+          }
+        }
+        await db.mindMapNodes.bulkDelete(mapNodes.map((m) => m.id))
+      }
+      await db.nodes.bulkDelete(nodes.map((n) => n.id))
+      await db.highlights.delete(highlightId)
+    },
+  )
+}
+
 export async function addNodeToWorkspace(
   workspaceId: string,
   nodeId: string,

@@ -3,16 +3,25 @@ import {
   useEffect,
   useRef,
   useState,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import { loadPdfDocument, getPageTextBoxes } from '@/lib/pdf'
 import { loadDocument } from '@/lib/opfs'
-import { createHighlight, addNodeToWorkspace, deleteLastPenStroke } from '@/lib/actions'
+import {
+  createHighlight,
+  addNodeToWorkspace,
+  deleteLastPenStroke,
+  updateHighlightColor,
+  deleteHighlight,
+} from '@/lib/actions'
 import { db } from '@/lib/db'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { useUiStore } from '@/store/uiStore'
 import { PenOverlay } from '@/components/PenOverlay'
+import { HighlightEditMenu } from '@/components/HighlightEditMenu'
+import type { AnchorPort, HighlightAnchor } from '@/lib/highlightAnchors'
 import { HIGHLIGHT_COLORS, type Highlight, type HighlightColor, type Rect } from '@/types'
 import './PdfViewer.css'
 
@@ -20,6 +29,8 @@ interface Props {
   documentId: string
   projectId: string
   workspaceId?: string
+  /** 리더 화면이 연결선을 그릴 때 쓰는 좌표 통로 */
+  anchorPort?: AnchorPort
 }
 
 interface SelectionPayload {
@@ -30,7 +41,7 @@ interface SelectionPayload {
 
 const PEN_COLORS = ['#e8c547', '#7dcea0', '#85c1e9', '#f5b7b1', '#1a2332']
 
-export function PdfViewer({ documentId, projectId, workspaceId }: Props) {
+export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null)
   const [scale, setScale] = useState(1.15)
@@ -38,6 +49,7 @@ export function PdfViewer({ documentId, projectId, workspaceId }: Props) {
   const [loading, setLoading] = useState(true)
   const [selection, setSelection] = useState<SelectionPayload | null>(null)
   const [selMenu, setSelMenu] = useState<{ x: number; y: number } | null>(null)
+  const [editing, setEditing] = useState<{ id: string; x: number; y: number } | null>(null)
 
   const highlightColor = useUiStore((s) => s.highlightColor)
   const setHighlightColor = useUiStore((s) => s.setHighlightColor)
@@ -47,6 +59,7 @@ export function PdfViewer({ documentId, projectId, workspaceId }: Props) {
   const setReaderTool = useUiStore((s) => s.setReaderTool)
   const pendingJump = useUiStore((s) => s.pendingJump)
   const setPendingJump = useUiStore((s) => s.setPendingJump)
+  const activeHighlightId = useUiStore((s) => s.activeHighlightId)
 
   const highlights = useLiveQuery(
     () => db.highlights.where('documentId').equals(documentId).toArray(),
@@ -86,6 +99,84 @@ export function PdfViewer({ documentId, projectId, workspaceId }: Props) {
     el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
     setPendingJump(null)
   }, [pendingJump, documentId, highlights, setPendingJump])
+
+  /*
+   * 하이라이트 사각형은 텍스트 레이어 아래에 있어 클릭을 직접 받지 못한다.
+   * 그래서 눌린 좌표를 페이지 비율로 바꿔 저장된 rect 와 맞춰본다.
+   */
+  const hitTestHighlight = useCallback(
+    (target: Element, clientX: number, clientY: number): Highlight | null => {
+      const pageEl = target.closest?.('[data-page]') as HTMLElement | null
+      if (!pageEl) return null
+      const pageRect = pageEl.getBoundingClientRect()
+      if (pageRect.width < 1 || pageRect.height < 1) return null
+
+      const pageIndex = Number(pageEl.dataset.page)
+      const fx = (clientX - pageRect.left) / pageRect.width
+      const fy = (clientY - pageRect.top) / pageRect.height
+
+      // 겹친 하이라이트는 나중에 만든 것이 위에 그려지므로 뒤에서부터 찾는다
+      const onPage = (highlights ?? [])
+        .filter((h) => h.pageIndex === pageIndex)
+        .sort((a, b) => a.createdAt - b.createdAt)
+
+      for (let i = onPage.length - 1; i >= 0; i -= 1) {
+        const h = onPage[i]
+        const hit = h.rects.some(
+          (r) => fx >= r.left && fx <= r.left + r.width && fy >= r.top && fy <= r.top + r.height,
+        )
+        if (hit) return h
+      }
+      return null
+    },
+    [highlights],
+  )
+
+  const handleClick = useCallback(
+    (e: ReactMouseEvent) => {
+      if (readerTool === 'pen') return
+      // 드래그로 텍스트를 선택한 직후의 클릭은 선택 메뉴가 처리한다
+      const sel = window.getSelection()
+      if (sel && !sel.isCollapsed && sel.toString().trim()) return
+
+      const hit = hitTestHighlight(e.target as Element, e.clientX, e.clientY)
+      setEditing(hit ? { id: hit.id, x: e.clientX, y: e.clientY + 16 } : null)
+    },
+    [hitTestHighlight, readerTool],
+  )
+
+  useEffect(() => {
+    if (!anchorPort) return
+    anchorPort.register(() => {
+      const scroll = containerRef.current
+      if (!scroll) return null
+      const clip = scroll.getBoundingClientRect()
+      if (clip.width < 1 || clip.height < 1) return null
+
+      const anchors = new Map<string, HighlightAnchor>()
+      for (const el of scroll.querySelectorAll<HTMLElement>('[data-highlight]')) {
+        const id = el.dataset.highlight
+        if (!id) continue
+        const r = el.getBoundingClientRect()
+        const y = r.top + r.height / 2
+        if (y < clip.top || y > clip.bottom) continue
+        // 여러 줄에 걸친 하이라이트는 마지막 줄 끝에서 선을 뽑는다
+        const prev = anchors.get(id)
+        if (!prev || y > prev.y) anchors.set(id, { x: r.right, y })
+      }
+      return { clip, anchors }
+    })
+    return () => anchorPort.register(null)
+  }, [anchorPort])
+
+  useEffect(() => {
+    anchorPort?.invalidate()
+  }, [anchorPort, scale, highlights])
+
+  // 삭제된 하이라이트의 메뉴는 닫는다
+  useEffect(() => {
+    if (editing && highlights && !highlights.some((h) => h.id === editing.id)) setEditing(null)
+  }, [editing, highlights])
 
   const captureSelection = useCallback(() => {
     if (readerTool === 'pen') return
@@ -212,6 +303,8 @@ export function PdfViewer({ documentId, projectId, workspaceId }: Props) {
         ref={containerRef}
         onMouseUp={captureSelection}
         onTouchEnd={() => setTimeout(captureSelection, 50)}
+        onClick={handleClick}
+        onScroll={() => anchorPort?.invalidate()}
       >
         {Array.from({ length: pdf.numPages }, (_, i) => (
           <PdfPage
@@ -224,6 +317,8 @@ export function PdfViewer({ documentId, projectId, workspaceId }: Props) {
             penEnabled={readerTool === 'pen'}
             penColor={penColor}
             highlights={(highlights ?? []).filter((h) => h.pageIndex === i)}
+            activeHighlightId={activeHighlightId}
+            onRendered={() => anchorPort?.invalidate()}
           />
         ))}
       </div>
@@ -250,6 +345,20 @@ export function PdfViewer({ documentId, projectId, workspaceId }: Props) {
           </button>
         </div>
       )}
+
+      {editing && (
+        <HighlightEditMenu
+          x={editing.x}
+          y={editing.y}
+          color={highlights?.find((h) => h.id === editing.id)?.color ?? 'yellow'}
+          onPick={(c) => void updateHighlightColor(editing.id, c)}
+          onDelete={() => {
+            void deleteHighlight(editing.id)
+            setEditing(null)
+          }}
+          onClose={() => setEditing(null)}
+        />
+      )}
     </div>
   )
 }
@@ -263,6 +372,8 @@ function PdfPage({
   projectId,
   penEnabled,
   penColor,
+  activeHighlightId,
+  onRendered,
 }: {
   pdf: PDFDocumentProxy
   pageIndex: number
@@ -272,10 +383,14 @@ function PdfPage({
   projectId: string
   penEnabled: boolean
   penColor: string
+  activeHighlightId: string | null
+  onRendered: () => void
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const textRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ w: 0, h: 0 })
+  const onRenderedRef = useRef(onRendered)
+  onRenderedRef.current = onRendered
 
   useEffect(() => {
     let cancelled = false
@@ -314,6 +429,7 @@ function PdfPage({
         span.style.height = `${box.height}px`
         textLayer.appendChild(span)
       }
+      onRenderedRef.current()
     })()
     return () => {
       cancelled = true
@@ -332,7 +448,7 @@ function PdfPage({
           h.rects.map((r, i) => (
             <div
               key={`${h.id}-${i}`}
-              className="hl-rect"
+              className={`hl-rect ${activeHighlightId === h.id ? 'active' : ''}`}
               data-highlight={h.id}
               style={{
                 left: `${r.left * 100}%`,
