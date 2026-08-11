@@ -1,0 +1,40 @@
+.mm-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.mm-page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.85rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  background: rgba(18, 24, 31, 0.9);
+  flex-wrap: wrap;
+}
+
+.mm-page-head h1 {
+  margin: 0.2rem 0 0;
+  font-family: var(--font-display);
+  font-size: 1.6rem;
+  font-weight: 400;
+}
+
+.mm-page-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.mm-page-actions .input {
+  min-width: 10rem;
+  padding: 0.35rem 0.5rem;
+}
+
+.mm-page-body {
+  flex: 1;
+  min-height: 0;
+}

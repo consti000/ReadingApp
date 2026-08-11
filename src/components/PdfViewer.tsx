@@ -8,10 +8,11 @@ import {
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import { loadPdfDocument, getPageTextBoxes } from '@/lib/pdf'
 import { loadPdf } from '@/lib/opfs'
-import { createHighlight, addNodeToWorkspace } from '@/lib/actions'
+import { createHighlight, addNodeToWorkspace, deleteLastPenStroke } from '@/lib/actions'
 import { db } from '@/lib/db'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { useUiStore } from '@/store/uiStore'
+import { PenOverlay } from '@/components/PenOverlay'
 import { HIGHLIGHT_COLORS, type Highlight, type HighlightColor, type Rect } from '@/types'
 import './PdfViewer.css'
 
@@ -27,6 +28,8 @@ interface SelectionPayload {
   rects: Rect[]
 }
 
+const PEN_COLORS = ['#e8c547', '#7dcea0', '#85c1e9', '#f5b7b1', '#1a2332']
+
 export function PdfViewer({ documentId, projectId, workspaceId }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null)
@@ -38,6 +41,10 @@ export function PdfViewer({ documentId, projectId, workspaceId }: Props) {
 
   const highlightColor = useUiStore((s) => s.highlightColor)
   const setHighlightColor = useUiStore((s) => s.setHighlightColor)
+  const penColor = useUiStore((s) => s.penColor)
+  const setPenColor = useUiStore((s) => s.setPenColor)
+  const readerTool = useUiStore((s) => s.readerTool)
+  const setReaderTool = useUiStore((s) => s.setReaderTool)
   const pendingJump = useUiStore((s) => s.pendingJump)
   const setPendingJump = useUiStore((s) => s.setPendingJump)
 
@@ -81,6 +88,7 @@ export function PdfViewer({ documentId, projectId, workspaceId }: Props) {
   }, [pendingJump, documentId, highlights, setPendingJump])
 
   const captureSelection = useCallback(() => {
+    if (readerTool === 'pen') return
     const sel = window.getSelection()
     if (!sel || sel.isCollapsed || !sel.rangeCount) {
       setSelection(null)
@@ -111,7 +119,7 @@ export function PdfViewer({ documentId, projectId, workspaceId }: Props) {
     const last = clientRects[clientRects.length - 1]
     setSelection({ text, pageIndex, rects })
     setSelMenu({ x: last.right, y: last.bottom + 8 })
-  }, [])
+  }, [readerTool])
 
   const applyHighlight = async () => {
     if (!selection) return
@@ -139,17 +147,50 @@ export function PdfViewer({ documentId, projectId, workspaceId }: Props) {
   return (
     <div className="pdf-viewer">
       <div className="pdf-toolbar">
-        <div className="color-row">
-          {(Object.keys(HIGHLIGHT_COLORS) as HighlightColor[]).map((c) => (
-            <button
-              key={c}
-              className={`color-dot ${highlightColor === c ? 'active' : ''}`}
-              style={{ background: HIGHLIGHT_COLORS[c] }}
-              title={c}
-              onClick={() => setHighlightColor(c)}
-            />
-          ))}
+        <div className="tool-row">
+          <button
+            className={`btn btn-sm ${readerTool === 'highlight' ? 'btn-primary' : ''}`}
+            onClick={() => setReaderTool('highlight')}
+          >
+            하이라이트
+          </button>
+          <button
+            className={`btn btn-sm ${readerTool === 'pen' ? 'btn-primary' : ''}`}
+            onClick={() => setReaderTool('pen')}
+          >
+            필기(펜)
+          </button>
         </div>
+        {readerTool === 'highlight' ? (
+          <div className="color-row">
+            {(Object.keys(HIGHLIGHT_COLORS) as HighlightColor[]).map((c) => (
+              <button
+                key={c}
+                className={`color-dot ${highlightColor === c ? 'active' : ''}`}
+                style={{ background: HIGHLIGHT_COLORS[c] }}
+                title={c}
+                onClick={() => setHighlightColor(c)}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="color-row">
+            {PEN_COLORS.map((c) => (
+              <button
+                key={c}
+                className={`color-dot ${penColor === c ? 'active' : ''}`}
+                style={{ background: c }}
+                onClick={() => setPenColor(c)}
+              />
+            ))}
+            <button
+              className="btn btn-sm"
+              onClick={() => void deleteLastPenStroke(documentId)}
+            >
+              필기 되돌리기
+            </button>
+          </div>
+        )}
         <div className="zoom-row">
           <button className="btn btn-sm" onClick={() => setScale((s) => Math.max(0.6, s - 0.1))}>
             −
@@ -159,7 +200,11 @@ export function PdfViewer({ documentId, projectId, workspaceId }: Props) {
             +
           </button>
         </div>
-        <span className="pdf-hint">텍스트 드래그 → 하이라이트</span>
+        <span className="pdf-hint">
+          {readerTool === 'pen'
+            ? 'S펜/스타일러스 압력 반영 · 손가락은 스크롤'
+            : '텍스트 드래그 → 하이라이트'}
+        </span>
       </div>
 
       <div
@@ -174,12 +219,16 @@ export function PdfViewer({ documentId, projectId, workspaceId }: Props) {
             pdf={pdf}
             pageIndex={i}
             scale={scale}
+            documentId={documentId}
+            projectId={projectId}
+            penEnabled={readerTool === 'pen'}
+            penColor={penColor}
             highlights={(highlights ?? []).filter((h) => h.pageIndex === i)}
           />
         ))}
       </div>
 
-      {selMenu && selection && (
+      {selMenu && selection && readerTool === 'highlight' && (
         <div
           className="sel-menu"
           style={{ left: selMenu.x, top: selMenu.y }}
@@ -210,11 +259,19 @@ function PdfPage({
   pageIndex,
   scale,
   highlights,
+  documentId,
+  projectId,
+  penEnabled,
+  penColor,
 }: {
   pdf: PDFDocumentProxy
   pageIndex: number
   scale: number
   highlights: Highlight[]
+  documentId: string
+  projectId: string
+  penEnabled: boolean
+  penColor: string
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const textRef = useRef<HTMLDivElement>(null)
@@ -289,7 +346,14 @@ function PdfPage({
           )),
         )}
       </div>
-      <div className="text-layer" ref={textRef} />
+      <div className="text-layer" ref={textRef} style={{ pointerEvents: penEnabled ? 'none' : undefined }} />
+      <PenOverlay
+        documentId={documentId}
+        projectId={projectId}
+        pageIndex={pageIndex}
+        enabled={penEnabled}
+        color={penColor}
+      />
     </div>
   )
 }

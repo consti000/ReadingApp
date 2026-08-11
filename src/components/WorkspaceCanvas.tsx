@@ -1,7 +1,12 @@
 import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/lib/db'
-import { updateCardPosition, updateNodeMemo } from '@/lib/actions'
+import {
+  updateCardPosition,
+  updateNodeMemo,
+  createInkLink,
+  deleteInkLink,
+} from '@/lib/actions'
 import { useUiStore } from '@/store/uiStore'
 import { HIGHLIGHT_COLORS } from '@/types'
 import './WorkspaceCanvas.css'
@@ -12,10 +17,14 @@ interface Props {
   onOpenDocument?: (documentId: string, highlightId: string) => void
 }
 
+type Tool = 'pan' | 'link'
+
 export function WorkspaceCanvas({ workspaceId, projectId, onOpenDocument }: Props) {
   const viewportRef = useRef<HTMLDivElement>(null)
   const [pan, setPan] = useState({ x: 40, y: 40 })
   const [zoom, setZoom] = useState(1)
+  const [tool, setTool] = useState<Tool>('pan')
+  const [linkFrom, setLinkFrom] = useState<string | null>(null)
   const [dragging, setDragging] = useState<{
     id: string
     ox: number
@@ -39,12 +48,33 @@ export function WorkspaceCanvas({ workspaceId, projectId, onOpenDocument }: Prop
     () => db.nodes.where('projectId').equals(projectId).toArray(),
     [projectId],
   )
+  const inkLinks = useLiveQuery(
+    () => db.inkLinks.where('workspaceId').equals(workspaceId).toArray(),
+    [workspaceId],
+  )
 
   const nodeMap = new Map((nodes ?? []).map((n) => [n.id, n]))
+  const placeByNode = new Map((placements ?? []).map((p) => [p.nodeId, p]))
 
-  const onCardPointerDown = (e: ReactPointerEvent, id: string, x: number, y: number) => {
+  const cardCenter = (nodeId: string) => {
+    const p = placeByNode.get(nodeId)
+    if (!p) return null
+    return { x: p.x + p.width / 2, y: p.y + 70 }
+  }
+
+  const onCardPointerDown = (e: ReactPointerEvent, id: string, nodeId: string, x: number, y: number) => {
     if ((e.target as HTMLElement).closest('[data-no-drag]')) return
     e.stopPropagation()
+
+    if (tool === 'link') {
+      if (!linkFrom) {
+        setLinkFrom(nodeId)
+      } else {
+        void createInkLink(workspaceId, linkFrom, nodeId).then(() => setLinkFrom(null))
+      }
+      return
+    }
+
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
     setDragging({ id, ox: x, oy: y, sx: e.clientX, sy: e.clientY })
   }
@@ -81,6 +111,26 @@ export function WorkspaceCanvas({ workspaceId, projectId, onOpenDocument }: Prop
   return (
     <div className="ws-root">
       <div className="ws-toolbar">
+        <button
+          className={`btn btn-sm ${tool === 'pan' ? 'btn-primary' : ''}`}
+          onClick={() => {
+            setTool('pan')
+            setLinkFrom(null)
+          }}
+        >
+          이동
+        </button>
+        <button
+          className={`btn btn-sm ${tool === 'link' ? 'btn-primary' : ''}`}
+          onClick={() => setTool('link')}
+        >
+          잉크 링크
+        </button>
+        {tool === 'link' && (
+          <span className="ws-hint">
+            {linkFrom ? '연결할 대상 카드를 클릭' : '시작 카드를 클릭'}
+          </span>
+        )}
         <button className="btn btn-sm" onClick={() => setZoom((z) => Math.max(0.4, z - 0.1))}>
           −
         </button>
@@ -97,7 +147,9 @@ export function WorkspaceCanvas({ workspaceId, projectId, onOpenDocument }: Prop
         >
           리셋
         </button>
-        <span className="ws-hint">빈 공간 드래그로 이동 · 카드 드래그로 배치</span>
+        {tool === 'pan' && (
+          <span className="ws-hint">빈 공간 드래그로 이동 · 카드 드래그로 배치</span>
+        )}
       </div>
 
       <div
@@ -105,7 +157,7 @@ export function WorkspaceCanvas({ workspaceId, projectId, onOpenDocument }: Prop
         ref={viewportRef}
         style={{ background: workspace?.backgroundColor ?? '#1a1f26' }}
         onPointerDown={(e) => {
-          if (e.button !== 0) return
+          if (e.button !== 0 || tool !== 'pan') return
           if ((e.target as HTMLElement).closest('[data-placement]')) return
           setPanning({ sx: e.clientX, sy: e.clientY, px: pan.x, py: pan.y })
         }}
@@ -125,13 +177,48 @@ export function WorkspaceCanvas({ workspaceId, projectId, onOpenDocument }: Prop
           }}
         >
           <div className="ws-grid" />
+          <svg className="ws-inks" width="4000" height="3000">
+            {(inkLinks ?? []).map((link) => {
+              const a = cardCenter(link.fromNodeId)
+              const b = cardCenter(link.toNodeId)
+              if (!a || !b) return null
+              const mx = (a.x + b.x) / 2
+              const my = (a.y + b.y) / 2 - 40
+              return (
+                <g key={link.id}>
+                  <path
+                    d={`M ${a.x} ${a.y} Q ${mx} ${my} ${b.x} ${b.y}`}
+                    fill="none"
+                    stroke={link.color}
+                    strokeWidth={2.5}
+                    strokeLinecap="round"
+                    opacity={0.85}
+                  />
+                  <circle
+                    cx={mx}
+                    cy={my}
+                    r={8}
+                    fill="transparent"
+                    stroke={link.color}
+                    strokeWidth={1}
+                    className="ws-ink-hit"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      if (confirm('이 링크를 삭제할까요?')) void deleteInkLink(link.id)
+                    }}
+                  />
+                </g>
+              )
+            })}
+          </svg>
           {(placements ?? []).map((p) => {
             const node = nodeMap.get(p.nodeId)
             if (!node) return null
+            const selected = linkFrom === node.id
             return (
               <article
                 key={p.id}
-                className="ws-card"
+                className={`ws-card ${selected ? 'ws-card-link-from' : ''}`}
                 data-placement={p.id}
                 style={{
                   left: p.x,
@@ -139,7 +226,7 @@ export function WorkspaceCanvas({ workspaceId, projectId, onOpenDocument }: Prop
                   width: p.width,
                   borderColor: HIGHLIGHT_COLORS[node.color],
                 }}
-                onPointerDown={(e) => onCardPointerDown(e, p.id, p.x, p.y)}
+                onPointerDown={(e) => onCardPointerDown(e, p.id, node.id, p.x, p.y)}
               >
                 <header className="ws-card-head">
                   <span

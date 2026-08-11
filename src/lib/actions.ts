@@ -43,6 +43,12 @@ export async function deleteProject(id: string) {
       db.workspaces,
       db.cardPlacements,
       db.inkLinks,
+      db.mindMaps,
+      db.mindMapNodes,
+      db.flashcardDecks,
+      db.flashcards,
+      db.bibliography,
+      db.penStrokes,
     ],
     async () => {
       const ws = await db.workspaces.where('projectId').equals(id).toArray()
@@ -50,6 +56,18 @@ export async function deleteProject(id: string) {
         await db.cardPlacements.where('workspaceId').equals(w.id).delete()
         await db.inkLinks.where('workspaceId').equals(w.id).delete()
       }
+      const mms = await db.mindMaps.where('projectId').equals(id).toArray()
+      for (const m of mms) {
+        await db.mindMapNodes.where('mindMapId').equals(m.id).delete()
+      }
+      const decks = await db.flashcardDecks.where('projectId').equals(id).toArray()
+      for (const d of decks) {
+        await db.flashcards.where('deckId').equals(d.id).delete()
+      }
+      await db.mindMaps.where('projectId').equals(id).delete()
+      await db.flashcardDecks.where('projectId').equals(id).delete()
+      await db.bibliography.where('projectId').equals(id).delete()
+      await db.penStrokes.where('projectId').equals(id).delete()
       await db.workspaces.where('projectId').equals(id).delete()
       await db.nodes.where('projectId').equals(id).delete()
       await db.highlights.where('projectId').equals(id).delete()
@@ -193,4 +211,70 @@ export async function createWorkspace(projectId: string, name: string) {
     updatedAt: now,
   })
   return id
+}
+
+export async function createInkLink(
+  workspaceId: string,
+  fromNodeId: string,
+  toNodeId: string,
+  color = '#c4a574',
+) {
+  if (fromNodeId === toNodeId) return null
+  const existing = await db.inkLinks
+    .where('workspaceId')
+    .equals(workspaceId)
+    .filter((l) => l.fromNodeId === fromNodeId && l.toNodeId === toNodeId)
+    .first()
+  if (existing) return existing.id
+  const id = uuid()
+  await db.inkLinks.add({
+    id,
+    workspaceId,
+    fromNodeId,
+    toNodeId,
+    color,
+  })
+  return id
+}
+
+export async function deleteInkLink(id: string) {
+  await db.inkLinks.delete(id)
+}
+
+export async function savePenStroke(params: {
+  documentId: string
+  projectId: string
+  pageIndex: number
+  color: string
+  points: { x: number; y: number; pressure: number }[]
+}) {
+  if (params.points.length < 2) return null
+  const id = uuid()
+  await db.penStrokes.add({
+    id,
+    documentId: params.documentId,
+    projectId: params.projectId,
+    pageIndex: params.pageIndex,
+    color: params.color,
+    points: params.points,
+    createdAt: Date.now(),
+  })
+  return id
+}
+
+export async function clearPagePenStrokes(documentId: string, pageIndex: number) {
+  const strokes = await db.penStrokes
+    .where('documentId')
+    .equals(documentId)
+    .filter((s) => s.pageIndex === pageIndex)
+    .toArray()
+  await db.penStrokes.bulkDelete(strokes.map((s) => s.id))
+}
+
+export async function deleteLastPenStroke(documentId: string) {
+  const strokes = await db.penStrokes.where('documentId').equals(documentId).toArray()
+  if (!strokes.length) return
+  strokes.sort((a, b) => a.createdAt - b.createdAt)
+  const stroke = strokes[strokes.length - 1]
+  await db.penStrokes.delete(stroke.id)
 }

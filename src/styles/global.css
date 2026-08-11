@@ -248,6 +248,27 @@ a {
   to { opacity: 1; transform: scale(1) translateY(0); }
 }
 
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 1.5rem;
+  transform: translateX(-50%);
+  z-index: 100;
+  padding: 0.65rem 1.1rem;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  font-size: 0.9rem;
+  animation: slideUp 0.2s ease;
+}
+
+.tool-row {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+}
+
 @media (max-width: 768px) {
   .brand-sub {
     display: none;

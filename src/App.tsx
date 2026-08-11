@@ -4,6 +4,9 @@ import { ProjectPage } from '@/pages/ProjectPage'
 import { ReadPage } from '@/pages/ReadPage'
 import { WorkspacePage } from '@/pages/WorkspacePage'
 import { SplitPage } from '@/pages/SplitPage'
+import { MindMapPage } from '@/pages/MindMapPage'
+import { FlashcardPage } from '@/pages/FlashcardPage'
+import { BibliographyPage } from '@/pages/BibliographyPage'
 
 export default function App() {
   return (
@@ -21,6 +24,9 @@ export default function App() {
             path="/project/:projectId/split/:documentId/:workspaceId"
             element={<SplitPage />}
           />
+          <Route path="/project/:projectId/mindmap/:mindMapId" element={<MindMapPage />} />
+          <Route path="/project/:projectId/flashcards" element={<FlashcardPage />} />
+          <Route path="/project/:projectId/bibliography" element={<BibliographyPage />} />
         </Routes>
       </div>
     </BrowserRouter>

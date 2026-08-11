@@ -60,6 +60,12 @@ export function ReadPage() {
           >
             분할 보기
           </Link>
+          <Link className="btn btn-sm" to={`/project/${projectId}/flashcards`}>
+            플래시카드
+          </Link>
+          <Link className="btn btn-sm" to={`/project/${projectId}/bibliography`}>
+            참고문헌
+          </Link>
         </div>
       </header>
 

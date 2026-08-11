@@ -26,6 +26,8 @@ export interface DocumentMeta {
   /** OPFS 내 파일 경로 (documents/{id}.pdf) */
   opfsPath: string
   pageCount?: number
+  /** BibTeX cite key 연결 */
+  citeKey?: string
   createdAt: number
   updatedAt: number
 }
@@ -81,8 +83,86 @@ export interface InkLink {
   workspaceId: string
   fromNodeId: string
   toNodeId: string
-  path?: string
+  /** SVG path points in world coords */
+  points?: { x: number; y: number }[]
   color: string
+}
+
+export interface MindMap {
+  id: string
+  projectId: string
+  name: string
+  createdAt: number
+  updatedAt: number
+}
+
+export interface MindMapNode {
+  id: string
+  mindMapId: string
+  nodeId: string | null
+  /** 루트/폴더 노드용 라벨 (nodeId 없을 때) */
+  label?: string
+  parentId: string | null
+  x: number
+  y: number
+  collapsed?: boolean
+}
+
+export interface FlashcardDeck {
+  id: string
+  projectId: string
+  name: string
+  createdAt: number
+  updatedAt: number
+}
+
+export interface Flashcard {
+  id: string
+  deckId: string
+  projectId: string
+  nodeId: string
+  front: string
+  back: string
+  /** FSRS Card 직렬화 */
+  due: number
+  stability: number
+  difficulty: number
+  elapsed_days: number
+  scheduled_days: number
+  reps: number
+  lapses: number
+  state: number
+  last_review?: number
+  createdAt: number
+  updatedAt: number
+}
+
+export interface BibliographyEntry {
+  id: string
+  projectId: string
+  citeKey: string
+  entryType: string
+  title: string
+  authors: string[]
+  year?: string
+  journal?: string
+  booktitle?: string
+  publisher?: string
+  doi?: string
+  url?: string
+  raw: string
+  createdAt: number
+}
+
+/** PDF 페이지 위 자유 필기 스트로크 */
+export interface PenStroke {
+  id: string
+  documentId: string
+  projectId: string
+  pageIndex: number
+  color: string
+  points: { x: number; y: number; pressure: number }[]
+  createdAt: number
 }
 
 export const HIGHLIGHT_COLORS: Record<HighlightColor, string> = {

@@ -3,6 +3,7 @@ import { Link, useParams, useNavigate } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/lib/db'
 import { addDocument, deleteDocument, createWorkspace } from '@/lib/actions'
+import { ensureDefaultMindMap } from '@/lib/mindmap'
 import './ProjectPage.css'
 
 export function ProjectPage() {
@@ -36,6 +37,15 @@ export function ProjectPage() {
         : 0,
     [projectId],
   )
+  const dueCount = useLiveQuery(
+    async () => {
+      if (!projectId) return 0
+      const now = Date.now()
+      const cards = await db.flashcards.where('projectId').equals(projectId).toArray()
+      return cards.filter((c) => c.due <= now).length
+    },
+    [projectId],
+  )
 
   if (!projectId) return null
   if (project === undefined) return <div className="empty-state">불러오는 중…</div>
@@ -66,6 +76,7 @@ export function ProjectPage() {
           <h1>{project.name}</h1>
           <p className="meta">
             문서 {documents?.length ?? 0} · 하이라이트 {highlightCount ?? 0}
+            {(dueCount ?? 0) > 0 ? ` · 복습 ${dueCount}` : ''}
           </p>
         </div>
         <div className="project-actions">
@@ -89,6 +100,22 @@ export function ProjectPage() {
               워크스페이스
             </Link>
           )}
+          <button
+            className="btn"
+            onClick={async () => {
+              const id = await ensureDefaultMindMap(projectId)
+              navigate(`/project/${projectId}/mindmap/${id}`)
+            }}
+          >
+            마인드맵
+          </button>
+          <Link className="btn" to={`/project/${projectId}/flashcards`}>
+            플래시카드
+            {(dueCount ?? 0) > 0 ? ` (${dueCount})` : ''}
+          </Link>
+          <Link className="btn" to={`/project/${projectId}/bibliography`}>
+            참고문헌
+          </Link>
         </div>
       </header>
 
