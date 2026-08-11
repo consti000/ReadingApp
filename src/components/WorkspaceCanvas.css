@@ -1,0 +1,121 @@
+.ws-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+}
+
+.ws-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.ws-hint {
+  margin-left: auto;
+  font-size: 0.8rem;
+}
+
+.ws-viewport {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+  cursor: grab;
+  touch-action: none;
+}
+
+.ws-viewport:active {
+  cursor: grabbing;
+}
+
+.ws-world {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+  width: 4000px;
+  height: 3000px;
+}
+
+.ws-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+  background-size: 40px 40px;
+  pointer-events: none;
+}
+
+.ws-card {
+  position: absolute;
+  background: #243044;
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: 8px;
+  padding: 0.65rem 0.75rem 0.75rem;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+  cursor: grab;
+  user-select: none;
+  animation: cardIn 0.25s ease;
+  touch-action: none;
+}
+
+.ws-card:active {
+  cursor: grabbing;
+  z-index: 5;
+}
+
+.ws-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.4rem;
+}
+
+.ws-card-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.ws-card-text {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  max-height: 6.5em;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+}
+
+.ws-memo-btn {
+  margin-top: 0.5rem;
+  width: 100%;
+  text-align: left;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  padding: 0.25rem 0;
+}
+
+.ws-memo-btn:hover {
+  color: var(--accent);
+}
+
+.ws-memo {
+  margin-top: 0.5rem;
+  min-height: 3.5rem;
+  resize: vertical;
+  font-size: 0.85rem;
+}
+
+@media (max-width: 640px) {
+  .ws-hint {
+    display: none;
+  }
+}

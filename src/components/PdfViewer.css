@@ -1,0 +1,139 @@
+.pdf-viewer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  background: #0a0d11;
+}
+
+.pdf-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.45rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  flex-wrap: wrap;
+}
+
+.color-row {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.color-dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  padding: 0;
+}
+
+.color-dot.active {
+  border-color: #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
+}
+
+.zoom-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.pdf-hint {
+  margin-left: auto;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.pdf-scroll {
+  flex: 1;
+  overflow: auto;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  -webkit-overflow-scrolling: touch;
+}
+
+.pdf-page {
+  position: relative;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.45);
+  background: #fff;
+}
+
+.pdf-page canvas {
+  display: block;
+}
+
+.hl-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.hl-rect {
+  position: absolute;
+  opacity: 0.4;
+  mix-blend-mode: multiply;
+  border-radius: 1px;
+}
+
+.text-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  line-height: 1;
+  overflow: hidden;
+  opacity: 0.15;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.text-layer span {
+  position: absolute;
+  white-space: pre;
+  color: transparent;
+  transform-origin: 0% 0%;
+  cursor: text;
+}
+
+.pdf-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-muted);
+  padding: 2rem;
+}
+
+.pdf-status.error {
+  color: var(--danger);
+}
+
+.sel-menu {
+  position: fixed;
+  z-index: 50;
+  display: flex;
+  gap: 0.35rem;
+  padding: 0.35rem;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+  transform: translateX(-50%);
+  animation: slideUp 0.12s ease;
+}
+
+@media (max-width: 640px) {
+  .pdf-hint {
+    display: none;
+  }
+  .pdf-scroll {
+    padding: 0.5rem;
+  }
+}

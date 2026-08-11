@@ -1,0 +1,99 @@
+.read-page {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  height: 100%;
+  overflow: hidden;
+}
+
+.read-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--border);
+  background: rgba(18, 24, 31, 0.9);
+}
+
+.read-actions {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.read-body {
+  display: grid;
+  grid-template-columns: 1fr minmax(200px, 280px);
+  min-height: 0;
+}
+
+.read-pdf {
+  min-width: 0;
+  min-height: 0;
+}
+
+.read-sidebar {
+  border-left: 1px solid var(--border);
+  background: var(--bg);
+  overflow: auto;
+  padding: 0.75rem;
+}
+
+.read-sidebar h3 {
+  margin: 0 0 0.75rem;
+  font-size: 0.75rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.muted {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.hl-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.hl-item {
+  padding: 0.65rem 0.7rem;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+}
+
+.hl-item p {
+  margin: 0 0 0.4rem;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.hl-item-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.page-badge {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+@media (max-width: 800px) {
+  .read-body {
+    grid-template-columns: 1fr;
+  }
+
+  .read-sidebar {
+    display: none;
+  }
+}

@@ -1,0 +1,154 @@
+.project-page {
+  height: 100%;
+  overflow: auto;
+  padding: 1.5rem 2rem 3rem;
+  max-width: 960px;
+}
+
+.project-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 2rem;
+  flex-wrap: wrap;
+}
+
+.back-link {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.back-link:hover {
+  color: var(--accent);
+}
+
+.project-head h1 {
+  font-family: var(--font-display);
+  font-size: 2.25rem;
+  font-weight: 400;
+  margin: 0.35rem 0 0.25rem;
+}
+
+.meta {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.project-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.project-section {
+  margin-bottom: 2rem;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+
+.section-head h2 {
+  font-size: 0.8rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin: 0;
+  font-weight: 600;
+}
+
+.dropzone {
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  padding: 2.5rem 1rem;
+  text-align: center;
+  color: var(--text-muted);
+  cursor: pointer;
+  background: var(--accent-soft);
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.dropzone:hover {
+  border-color: var(--accent);
+  background: rgba(196, 165, 116, 0.2);
+}
+
+.doc-list,
+.ws-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.doc-list > li {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+}
+
+.doc-item {
+  flex: 1;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  color: inherit;
+  text-decoration: none;
+  min-width: 0;
+}
+
+.doc-item:hover .doc-title {
+  color: var(--accent);
+}
+
+.doc-icon {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: #1a1510;
+  background: var(--accent);
+  padding: 0.2rem 0.4rem;
+  border-radius: 3px;
+}
+
+.doc-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.doc-date {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.ws-item {
+  display: block;
+  padding: 0.7rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: inherit;
+}
+
+.ws-item:hover {
+  border-color: var(--border-strong);
+}
+
+@media (max-width: 640px) {
+  .project-page {
+    padding: 1rem 1rem 2rem;
+  }
+}
