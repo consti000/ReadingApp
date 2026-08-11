@@ -9,7 +9,18 @@ npm install
 npm run dev
 ```
 
-브라우저에서 `http://localhost:5173` 접속.
+브라우저에서 `http://localhost:5173/ReadingApp/` 접속. (배포 경로와 맞추기 위해 `base`를 설정해 두었습니다)
+
+## 배포
+
+`master`에 푸시하면 GitHub Actions(`.github/workflows/deploy.yml`)가 빌드해 GitHub Pages에 올립니다.
+공개 주소는 <https://consti000.github.io/ReadingApp/> 입니다.
+
+저장소 **Settings → Pages → Source** 를 `GitHub Actions` 로 한 번 설정해야 합니다.
+다른 주소로 옮길 때는 `vite.config.ts` 의 `base` 를 함께 바꿔야 합니다.
+
+데이터는 브라우저 오리진별로 저장되므로 로컬(`localhost`)과 배포 주소는 서로 다른 저장소를 씁니다.
+옮기려면 앱의 백업 내보내기 / 복원을 사용하세요.
 
 ## 기능
 
