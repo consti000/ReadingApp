@@ -38,7 +38,7 @@ export default defineConfig({
     },
   },
   optimizeDeps: {
-    include: ['pdfjs-dist'],
+    include: ['pdfjs-dist', 'epubjs'],
   },
   worker: {
     format: 'es',

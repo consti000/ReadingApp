@@ -2,6 +2,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/lib/db'
 import { PdfViewer } from '@/components/PdfViewer'
+import { EpubViewer } from '@/components/EpubViewer'
 import { WorkspaceCanvas } from '@/components/WorkspaceCanvas'
 import './SplitPage.css'
 
@@ -39,6 +40,8 @@ export function SplitPage() {
       ? workspaceId
       : workspaces?.[0]?.id
 
+  const isEpub = (doc?.format ?? 'pdf') === 'epub'
+
   return (
     <div className="split-page">
       <header className="split-header">
@@ -73,11 +76,19 @@ export function SplitPage() {
 
       <div className="split-body">
         <div className="split-pane">
-          <PdfViewer
-            documentId={documentId}
-            projectId={projectId}
-            workspaceId={wsId}
-          />
+          {isEpub ? (
+            <EpubViewer
+              documentId={documentId}
+              projectId={projectId}
+              workspaceId={wsId}
+            />
+          ) : (
+            <PdfViewer
+              documentId={documentId}
+              projectId={projectId}
+              workspaceId={wsId}
+            />
+          )}
         </div>
         {wsId && (
           <div className="split-pane">

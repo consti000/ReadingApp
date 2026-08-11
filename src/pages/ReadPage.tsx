@@ -2,6 +2,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/lib/db'
 import { PdfViewer } from '@/components/PdfViewer'
+import { EpubViewer } from '@/components/EpubViewer'
 import { addNodeToWorkspace } from '@/lib/actions'
 import './ReadPage.css'
 
@@ -39,6 +40,8 @@ export function ReadPage() {
   if (!doc) return <div className="empty-state">문서를 찾을 수 없습니다</div>
 
   const nodeByHighlight = new Map((nodes ?? []).map((n) => [n.sourceHighlightId, n]))
+  const format = doc.format ?? 'pdf'
+  const isEpub = format === 'epub'
 
   return (
     <div className="read-page">
@@ -71,11 +74,19 @@ export function ReadPage() {
 
       <div className="read-body">
         <div className="read-pdf">
-          <PdfViewer
-            documentId={documentId}
-            projectId={projectId}
-            workspaceId={workspace?.id}
-          />
+          {isEpub ? (
+            <EpubViewer
+              documentId={documentId}
+              projectId={projectId}
+              workspaceId={workspace?.id}
+            />
+          ) : (
+            <PdfViewer
+              documentId={documentId}
+              projectId={projectId}
+              workspaceId={workspace?.id}
+            />
+          )}
         </div>
         <aside className="read-sidebar">
           <h3>하이라이트</h3>
@@ -89,7 +100,9 @@ export function ReadPage() {
                   <li key={h.id} className="hl-item">
                     <p>{h.text}</p>
                     <div className="hl-item-actions">
-                      <span className="page-badge">p.{h.pageIndex + 1}</span>
+                      <span className="page-badge">
+                        {isEpub ? `§${h.pageIndex + 1}` : `p.${h.pageIndex + 1}`}
+                      </span>
                       {node && workspace && (
                         <button
                           className="btn btn-ghost btn-sm"

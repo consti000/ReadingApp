@@ -2,6 +2,8 @@
 
 export type HighlightColor = 'yellow' | 'green' | 'blue' | 'pink' | 'orange'
 
+export type DocumentFormat = 'pdf' | 'epub'
+
 export interface Rect {
   pageIndex: number
   left: number
@@ -23,7 +25,9 @@ export interface DocumentMeta {
   id: string
   projectId: string
   title: string
-  /** OPFS 내 파일 경로 (documents/{id}.pdf) */
+  /** pdf | epub — 구버전 데이터는 undefined → pdf 취급 */
+  format?: DocumentFormat
+  /** OPFS 내 파일 경로 (documents/{id}.pdf|epub) */
   opfsPath: string
   pageCount?: number
   /** BibTeX cite key 연결 */
@@ -40,6 +44,8 @@ export interface Highlight {
   color: HighlightColor
   rects: Rect[]
   pageIndex: number
+  /** EPUB Canonical Fragment Identifier (범위) */
+  cfi?: string
   note?: string
   createdAt: number
   updatedAt: number

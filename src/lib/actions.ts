@@ -1,6 +1,11 @@
 import { v4 as uuid } from 'uuid'
 import { db } from '@/lib/db'
-import { savePdf, deletePdf, documentOpfsPath } from '@/lib/opfs'
+import {
+  saveDocument,
+  deleteDocumentFile,
+  documentOpfsPath,
+  detectFormat,
+} from '@/lib/opfs'
 import type { HighlightColor, Rect } from '@/types'
 
 export async function createProject(name: string, description?: string) {
@@ -32,7 +37,7 @@ export async function renameProject(id: string, name: string) {
 
 export async function deleteProject(id: string) {
   const docs = await db.documents.where('projectId').equals(id).toArray()
-  for (const d of docs) await deletePdf(d.id)
+  for (const d of docs) await deleteDocumentFile(d.id, d.format ?? 'pdf')
   await db.transaction(
     'rw',
     [
@@ -78,15 +83,19 @@ export async function deleteProject(id: string) {
 }
 
 export async function addDocument(projectId: string, file: File) {
+  const format = detectFormat(file)
+  if (!format) throw new Error('지원하지 않는 파일 형식입니다 (PDF/EPUB)')
+
   const id = uuid()
   const now = Date.now()
-  const title = file.name.replace(/\.pdf$/i, '')
-  const opfsPath = await savePdf(id, file)
+  const title = file.name.replace(/\.(pdf|epub)$/i, '')
+  const opfsPath = await saveDocument(id, file, format)
   await db.documents.add({
     id,
     projectId,
     title,
-    opfsPath: opfsPath || documentOpfsPath(id),
+    format,
+    opfsPath: opfsPath || documentOpfsPath(id, format),
     createdAt: now,
     updatedAt: now,
   })
@@ -97,7 +106,7 @@ export async function addDocument(projectId: string, file: File) {
 export async function deleteDocument(documentId: string) {
   const doc = await db.documents.get(documentId)
   if (!doc) return
-  await deletePdf(documentId)
+  await deleteDocumentFile(documentId, doc.format ?? 'pdf')
   const highlights = await db.highlights.where('documentId').equals(documentId).toArray()
   const highlightIds = new Set(highlights.map((h) => h.id))
   const nodes = await db.nodes.where('documentId').equals(documentId).toArray()
@@ -124,6 +133,7 @@ export async function createHighlight(params: {
   rects: Rect[]
   pageIndex: number
   note?: string
+  cfi?: string
 }) {
   const now = Date.now()
   const highlightId = uuid()
@@ -138,6 +148,7 @@ export async function createHighlight(params: {
       color: params.color,
       rects: params.rects,
       pageIndex: params.pageIndex,
+      cfi: params.cfi,
       note: params.note,
       createdAt: now,
       updatedAt: now,

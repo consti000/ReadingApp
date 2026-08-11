@@ -14,8 +14,8 @@ npm run dev
 ## 기능
 
 ### Phase 1
-- 프로젝트 / PDF 업로드 (OPFS)
-- PDF 뷰어 + 하이라이트
+- 프로젝트 / PDF·EPUB 업로드 (OPFS)
+- PDF·EPUB 뷰어 + 하이라이트
 - 발췌 Node → 워크스페이스 카드
 - 원문 위치 추적
 - IndexedDB(Dexie) + zip 백업/복원

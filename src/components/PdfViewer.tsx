@@ -7,7 +7,7 @@ import {
 } from 'react'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import { loadPdfDocument, getPageTextBoxes } from '@/lib/pdf'
-import { loadPdf } from '@/lib/opfs'
+import { loadDocument } from '@/lib/opfs'
 import { createHighlight, addNodeToWorkspace, deleteLastPenStroke } from '@/lib/actions'
 import { db } from '@/lib/db'
 import { useLiveQuery } from 'dexie-react-hooks'
@@ -59,7 +59,7 @@ export function PdfViewer({ documentId, projectId, workspaceId }: Props) {
       setLoading(true)
       setError(null)
       try {
-        const blob = await loadPdf(documentId)
+        const blob = await loadDocument(documentId, 'pdf')
         if (!blob) throw new Error('PDF 파일을 찾을 수 없습니다 (OPFS)')
         const buf = await blob.arrayBuffer()
         const doc = await loadPdfDocument(new Uint8Array(buf))

@@ -57,10 +57,13 @@ export function ProjectPage() {
     try {
       let lastId = ''
       for (const file of Array.from(files)) {
-        if (!file.name.toLowerCase().endsWith('.pdf')) continue
+        const name = file.name.toLowerCase()
+        if (!name.endsWith('.pdf') && !name.endsWith('.epub')) continue
         lastId = await addDocument(projectId, file)
       }
       if (lastId) navigate(`/project/${projectId}/read/${lastId}`)
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '업로드 실패')
     } finally {
       setUploading(false)
     }
@@ -85,12 +88,12 @@ export function ProjectPage() {
             disabled={uploading}
             onClick={() => fileRef.current?.click()}
           >
-            {uploading ? '업로드 중…' : 'PDF 추가'}
+            {uploading ? '업로드 중…' : '문서 추가'}
           </button>
           <input
             ref={fileRef}
             type="file"
-            accept="application/pdf,.pdf"
+            accept="application/pdf,.pdf,application/epub+zip,.epub"
             multiple
             hidden
             onChange={(e) => void handleUpload(e.target.files)}
@@ -133,14 +136,14 @@ export function ProjectPage() {
             }}
             onClick={() => fileRef.current?.click()}
           >
-            <p>PDF를 끌어다 놓거나 클릭해서 추가</p>
+            <p>PDF 또는 EPUB을 끌어다 놓거나 클릭해서 추가</p>
           </div>
         ) : (
           <ul className="doc-list">
             {documents.map((d) => (
               <li key={d.id}>
                 <Link to={`/project/${projectId}/read/${d.id}`} className="doc-item">
-                  <span className="doc-icon">PDF</span>
+                  <span className="doc-icon">{(d.format ?? 'pdf').toUpperCase()}</span>
                   <span className="doc-title">{d.title}</span>
                   <span className="doc-date">
                     {new Date(d.updatedAt).toLocaleDateString('ko-KR')}

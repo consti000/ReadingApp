@@ -1,0 +1,144 @@
+.epub-viewer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  background: #0a0d11;
+  position: relative;
+}
+
+.epub-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.45rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.epub-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.epub-loc {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  min-width: 5.5rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.epub-toc {
+  max-width: 12rem;
+  padding: 0.3rem 0.45rem;
+  font-size: 0.85rem;
+}
+
+.epub-hint {
+  margin-left: auto;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.epub-progress {
+  height: 3px;
+  background: rgba(255, 255, 255, 0.06);
+  flex-shrink: 0;
+}
+
+.epub-progress-bar {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s ease;
+}
+
+.epub-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  background: #f7f4ef;
+}
+
+.epub-frame {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  background: #f7f4ef;
+  overflow: hidden;
+}
+
+.epub-frame .epub-container {
+  height: 100% !important;
+}
+
+/*
+ * marks-pane 은 하이라이트 색을 SVG 속성으로 넣고 mix-blend-mode 도 속성으로 넣는데,
+ * blend 는 CSS 로만 적용되므로 여기서 보완한다. fill 은 속성이 이겨야 하므로 지정 금지.
+ */
+.epub-frame .readlink-hl {
+  mix-blend-mode: multiply;
+  pointer-events: none;
+}
+
+.epub-edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 12%;
+  max-width: 88px;
+  z-index: 3;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+}
+
+.epub-edge:disabled {
+  cursor: default;
+}
+
+.epub-edge-prev {
+  left: 0;
+}
+
+.epub-edge-next {
+  right: 0;
+}
+
+.epub-edge-prev:not(:disabled):hover {
+  background: linear-gradient(90deg, rgba(196, 165, 116, 0.12), transparent);
+}
+
+.epub-edge-next:not(:disabled):hover {
+  background: linear-gradient(270deg, rgba(196, 165, 116, 0.12), transparent);
+}
+
+.epub-status {
+  position: absolute;
+  inset: 52px 0 0;
+  display: grid;
+  place-items: center;
+  z-index: 5;
+  background: rgba(10, 13, 17, 0.72);
+  color: var(--text-muted);
+}
+
+.epub-status.error {
+  color: var(--danger);
+}
+
+@media (max-width: 640px) {
+  .epub-hint {
+    display: none;
+  }
+
+  .epub-edge {
+    width: 18%;
+    max-width: 72px;
+  }
+}

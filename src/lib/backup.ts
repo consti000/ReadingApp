@@ -1,12 +1,12 @@
 import JSZip from 'jszip'
 import { exportDbJson, importDbJson, db } from '@/lib/db'
 import {
-  readAllPdfs,
-  writeAllPdfs,
-  clearAllPdfs,
+  readAllDocuments,
+  writeAllDocuments,
+  clearAllDocuments,
 } from '@/lib/opfs'
 
-const META_VERSION = 1
+const META_VERSION = 2
 
 export async function exportBackup(): Promise<Blob> {
   const zip = new JSZip()
@@ -17,11 +17,11 @@ export async function exportBackup(): Promise<Blob> {
   )
   zip.file('db.json', JSON.stringify(data))
 
-  const pdfs = await readAllPdfs()
+  const files = await readAllDocuments()
   const folder = zip.folder('documents')
   if (folder) {
-    for (const [id, blob] of pdfs) {
-      folder.file(`${id}.pdf`, blob)
+    for (const [, { blob, filename }] of files) {
+      folder.file(filename, blob)
     }
   }
 
@@ -46,26 +46,28 @@ export async function importBackup(file: File): Promise<{ documents: number; pro
 
   const data = JSON.parse(await dbFile.async('string')) as Record<string, unknown[]>
 
-  const pdfMap = new Map<string, Blob>()
-  const docsFolder = zip.folder('documents')
-  if (docsFolder) {
-    const tasks: Promise<void>[] = []
-    zip.forEach((relativePath, entry) => {
-      if (relativePath.startsWith('documents/') && relativePath.endsWith('.pdf') && !entry.dir) {
-        const id = relativePath.replace(/^documents\//, '').replace(/\.pdf$/, '')
-        tasks.push(
-          entry.async('blob').then((blob) => {
-            pdfMap.set(id, blob)
-          }),
-        )
-      }
-    })
-    await Promise.all(tasks)
-  }
+  const fileMap = new Map<string, { blob: Blob; filename: string }>()
+  const tasks: Promise<void>[] = []
+  zip.forEach((relativePath, entry) => {
+    if (
+      relativePath.startsWith('documents/') &&
+      !entry.dir &&
+      (relativePath.endsWith('.pdf') || relativePath.endsWith('.epub'))
+    ) {
+      const filename = relativePath.replace(/^documents\//, '')
+      const id = filename.replace(/\.(pdf|epub)$/i, '')
+      tasks.push(
+        entry.async('blob').then((blob) => {
+          fileMap.set(id, { blob, filename })
+        }),
+      )
+    }
+  })
+  await Promise.all(tasks)
 
-  await clearAllPdfs()
+  await clearAllDocuments()
   await importDbJson(data)
-  await writeAllPdfs(pdfMap)
+  await writeAllDocuments(fileMap)
 
   return {
     documents: (data.documents?.length as number) ?? 0,
@@ -74,7 +76,7 @@ export async function importBackup(file: File): Promise<{ documents: number; pro
 }
 
 export async function wipeAllData(): Promise<void> {
-  await clearAllPdfs()
+  await clearAllDocuments()
   await db.delete()
   await db.open()
 }

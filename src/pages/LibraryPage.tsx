@@ -112,7 +112,7 @@ export function LibraryPage() {
         {!projects?.length ? (
           <div className="empty-state">
             <h2>프로젝트를 만들어 시작하세요</h2>
-            <p>PDF를 올리고 하이라이트하면, 발췌가 워크스페이스 카드로 바로 이어집니다.</p>
+            <p>PDF·EPUB을 올리고 하이라이트하면, 발췌가 워크스페이스 카드로 바로 이어집니다.</p>
             <button className="btn btn-primary" onClick={() => setShowNew(true)}>
               첫 프로젝트 만들기
             </button>
