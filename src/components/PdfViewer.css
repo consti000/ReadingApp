@@ -58,34 +58,38 @@
   z-index: 1;
 }
 
-/* 원색을 절반만 남겨 얹으므로 글자가 그대로 읽힌다 */
-.hl-rect {
+/*
+ * 하이라이트 하나를 한 겹으로 묶어 얹는다.
+ * 투명도와 겹침 계산을 이 겹에서 한 번만 하므로, 안쪽 조각들이 서로 맞닿아도
+ * 이음매가 진해지지 않는다. (칠하는 진하기는 인라인 스타일로 정한다)
+ */
+.hl-group {
   position: absolute;
-  opacity: 0.5;
+  inset: 0;
+  isolation: isolate;
   mix-blend-mode: multiply;
-  border-radius: 1px;
   transition: opacity 0.12s ease;
 }
 
-.hl-rect.active {
-  opacity: 0.8;
+/* 밑줄은 글자를 덮지 않으므로 색을 그대로 얹는다 */
+.hl-group.underline {
+  mix-blend-mode: normal;
+}
+
+/* 원색을 절반만 남겨 얹으므로 글자가 그대로 읽힌다 */
+.hl-rect {
+  position: absolute;
+  border-radius: 1px;
 }
 
 /* 밑줄 범례는 글자를 덮지 않고 아래에만 선을 남긴다 */
 .hl-rect.underline {
-  mix-blend-mode: normal;
   border-bottom: 2px solid;
   border-radius: 0;
-  opacity: 0.9;
-}
-
-.hl-rect.underline.active {
-  opacity: 1;
 }
 
 /* 손끝을 따라 칠해질 자리 */
 .hl-rect.preview {
-  opacity: 0.6;
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
 }
 

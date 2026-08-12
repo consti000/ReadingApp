@@ -80,9 +80,26 @@
  * marks-pane 은 하이라이트 색을 SVG 속성으로 넣고 mix-blend-mode 도 속성으로 넣는데,
  * blend 는 CSS 로만 적용되므로 여기서 보완한다. fill 은 속성이 이겨야 하므로 지정 금지.
  */
+/*
+ * 진하기는 하이라이트 한 묶음에서 한 번만 준다 (조각은 원색).
+ * 조각끼리 맞닿는 이음매에서 색이 두 번 얹혀 진해지는 것을 막는다.
+ */
 .epub-frame .readlink-hl {
+  opacity: 0.5;
+  isolation: isolate;
   mix-blend-mode: multiply;
   pointer-events: none;
+}
+
+/*
+ * 표시 조각은 줄 간격까지 통째로 덮는 크기로 오기 때문에, 그대로 두면
+ * 여러 줄·여러 문장이 한 덩어리로 보인다. 글자 높이에 맞게 줄여 줄 사이에 틈을 남긴다.
+ */
+.epub-frame .readlink-hl rect {
+  transform-box: fill-box;
+  transform-origin: center;
+  transform: scaleY(0.7);
+  rx: 2px;
 }
 
 /* 밑줄 범례 — 테두리 사각형은 지우고, 검은 실선은 범례 색으로 되돌린다 */

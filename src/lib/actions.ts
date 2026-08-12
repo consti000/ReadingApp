@@ -170,6 +170,26 @@ export async function createHighlight(params: {
   return { highlightId, nodeId }
 }
 
+/**
+ * 같은 자리를 다시 그었을 때 쓰는 갈아 끼우기.
+ * 새로 만들면 색이 겹쳐 진해지고 카드도 둘로 늘어나므로,
+ * 원래 하이라이트의 범위와 색만 바꿔 카드·메모를 그대로 살린다.
+ */
+export async function updateHighlightRegion(
+  highlightId: string,
+  patch: { text: string; color: HighlightColor; rects: Rect[]; pageIndex: number; cfi?: string },
+) {
+  const now = Date.now()
+  await db.transaction('rw', [db.highlights, db.nodes], async () => {
+    const changed = await db.highlights.update(highlightId, { ...patch, updatedAt: now })
+    if (!changed) return
+    const nodes = await db.nodes.where('sourceHighlightId').equals(highlightId).toArray()
+    for (const n of nodes) {
+      await db.nodes.update(n.id, { text: patch.text, color: patch.color, updatedAt: now })
+    }
+  })
+}
+
 /** 하이라이트 색은 발췌 노드에도 그대로 반영해 카드·마인드맵 색과 어긋나지 않게 한다 */
 export async function updateHighlightColor(highlightId: string, color: HighlightColor) {
   const now = Date.now()

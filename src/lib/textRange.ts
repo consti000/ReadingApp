@@ -17,13 +17,70 @@ interface CaretLookup {
   caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null
 }
 
-/** 화면 좌표(문서 기준)에 놓인 글자 위치 */
-export function caretAt(doc: Document, x: number, y: number): CaretPoint | null {
+/** 그 좌표에 글자가 있을 때만 인정한다 (그림·여백에서 잡힌 위치는 범위로 못 쓴다) */
+function probeCaret(doc: Document, x: number, y: number): CaretPoint | null {
   const target = doc as unknown as CaretLookup
   const range = target.caretRangeFromPoint?.(x, y)
-  if (range) return { node: range.startContainer, offset: range.startOffset }
-  const pos = target.caretPositionFromPoint?.(x, y)
-  return pos ? { node: pos.offsetNode, offset: pos.offset } : null
+  const point = range
+    ? { node: range.startContainer, offset: range.startOffset }
+    : (() => {
+        const pos = target.caretPositionFromPoint?.(x, y)
+        return pos ? { node: pos.offsetNode, offset: pos.offset } : null
+      })()
+  return point?.node.nodeType === Node.TEXT_NODE ? point : null
+}
+
+/** 여백을 건너 글자를 찾아볼 거리 — 줄 끝을 넘겨 그어도 그 줄 끝까지 잡히게 한다 */
+const REACH_STEP_PX = 12
+const REACH_MAX_PX = 480
+
+/**
+ * 화면 좌표(문서 기준)에 놓인 글자 위치. 여백이면 같은 줄에서 가장 가까운 글자를 준다.
+ * `scope` 를 주면 그 안의 글자만 인정한다 — 본문 밖(사이드바 등)으로 범위가 새지 않게.
+ */
+export function caretAt(
+  doc: Document,
+  x: number,
+  y: number,
+  scope?: Element | null,
+): CaretPoint | null {
+  const inScope = (point: CaretPoint | null) =>
+    point && (!scope || scope.contains(point.node)) ? point : null
+
+  const direct = inScope(probeCaret(doc, x, y))
+  if (direct) return direct
+
+  // 여백을 짚었을 때는 빈칸 조각을 건너뛰고 실제 글자에 붙어야 줄 끝까지 잡힌다
+  const nearby = (at: number) => {
+    const point = inScope(probeCaret(doc, at, y))
+    return point && (point.node.textContent ?? '').trim() ? point : null
+  }
+
+  for (let away = REACH_STEP_PX; away <= REACH_MAX_PX; away += REACH_STEP_PX) {
+    const before = nearby(x - away)
+    if (before) return snapToEdge(before, x)
+    const after = nearby(x + away)
+    if (after) return snapToEdge(after, x)
+  }
+  return null
+}
+
+/** 여백에서 찾은 글자는 손끝이 있는 쪽 끝에 붙인다 — 줄 끝을 넘겨 그으면 그 줄 끝까지 */
+function snapToEdge(point: CaretPoint, x: number): CaretPoint {
+  const doc = point.node.ownerDocument
+  if (!doc) return point
+  const whole = doc.createRange()
+  whole.selectNodeContents(point.node)
+  const box = whole.getBoundingClientRect()
+  if (x > box.right) return { node: point.node, offset: point.node.textContent?.length ?? point.offset }
+  if (x < box.left) return { node: point.node, offset: 0 }
+  return point
+}
+
+/** 그 글자가 속한 본문 조각 — 범위가 이 밖으로 새지 않게 가둘 때 쓴다 */
+export function scopeOf(point: CaretPoint, selector: string): Element | null {
+  const el = point.node.nodeType === Node.ELEMENT_NODE ? (point.node as Element) : point.node.parentElement
+  return el?.closest(selector) ?? null
 }
 
 /** 글자 중간에서 끊긴 양끝을 단어 경계까지 늘려 준다 */
@@ -42,6 +99,21 @@ function expandToWords(range: Range) {
     let j = range.endOffset
     while (j < text.length && !/\s/.test(text[j])) j += 1
     range.setEnd(end, j)
+  }
+}
+
+/** 두 범위가 겹치는 부분 — 같은 자리를 다시 그었는지 가늠할 때 쓴다 */
+export function intersectRanges(a: Range, b: Range): Range | null {
+  try {
+    const later = a.compareBoundaryPoints(Range.START_TO_START, b) >= 0 ? a : b
+    const earlier = a.compareBoundaryPoints(Range.END_TO_END, b) <= 0 ? a : b
+    const shared = a.cloneRange()
+    shared.setStart(later.startContainer, later.startOffset)
+    shared.setEnd(earlier.endContainer, earlier.endOffset)
+    return shared.collapsed ? null : shared
+  } catch {
+    // 서로 만나지 않는 범위
+    return null
   }
 }
 

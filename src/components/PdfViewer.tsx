@@ -15,18 +15,21 @@ import {
   addNodeToWorkspace,
   deleteLastPenStroke,
   updateHighlightColor,
+  updateHighlightRegion,
   deleteHighlight,
 } from '@/lib/actions'
+import { isSameSpot, rectsArea, rectsOverlapArea } from '@/lib/highlightOverlap'
 import { db } from '@/lib/db'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { useUiStore } from '@/store/uiStore'
 import { PenOverlay } from '@/components/PenOverlay'
 import { HighlightEditMenu } from '@/components/HighlightEditMenu'
 import type { AnchorPort, HighlightAnchor } from '@/lib/highlightAnchors'
-import { caretAt, rangeBetween, type CaretPoint } from '@/lib/textRange'
+import { caretAt, rangeBetween, scopeOf, type CaretPoint } from '@/lib/textRange'
 import { ColorPalette } from '@/components/ColorPalette'
 import {
   HIGHLIGHT_COLORS,
+  HIGHLIGHT_OPACITY,
   isUnderlineColor,
   type Highlight,
   type HighlightColor,
@@ -48,7 +51,8 @@ interface SelectionPayload {
   rects: Rect[]
 }
 
-const PEN_COLORS = ['#e8c547', '#7dcea0', '#85c1e9', '#f5b7b1', '#1a2332']
+/** 필기도 하이라이트와 같은 범례 색을 쓴다 */
+const PEN_COLORS = Object.values(HIGHLIGHT_COLORS)
 
 const rectStyle = (r: Rect) => ({
   left: `${r.left * 100}%`,
@@ -62,6 +66,55 @@ const paintStyle = (color: HighlightColor) =>
   isUnderlineColor(color)
     ? { borderBottomColor: HIGHLIGHT_COLORS[color] }
     : { background: HIGHLIGHT_COLORS[color] }
+
+const groupClass = (color: HighlightColor) =>
+  `hl-group ${isUnderlineColor(color) ? 'underline' : ''}`
+
+/** 진하기는 하이라이트 한 겹에서 한 번만 정한다 */
+const groupOpacity = (color: HighlightColor, active: boolean) => {
+  if (isUnderlineColor(color)) return active ? 1 : 0.9
+  return active ? 0.75 : HIGHLIGHT_OPACITY
+}
+
+interface Band {
+  left: number
+  top: number
+  right: number
+  bottom: number
+}
+
+/**
+ * 한 줄에 놓인 조각들을 한 덩어리로 합친다.
+ *
+ * 글자 조각마다 사각형이 따로 나오고 조각끼리 조금씩 겹쳐 있어서, 그대로 칠하면
+ * 이음매마다 색이 두 번 얹혀 진하게 보인다. 단 칸이 크게 벌어진 곳(다단 편집의 단 사이)은
+ * 남겨 두어야 하므로 글자 높이만큼 이상 떨어진 조각은 합치지 않는다.
+ */
+function mergeLineRects(rects: DOMRect[]): { left: number; top: number; width: number; height: number }[] {
+  const bands: Band[] = []
+  for (const r of [...rects].sort((a, b) => a.top - b.top || a.left - b.left)) {
+    const band = bands.find((b) => {
+      const shared = Math.min(b.bottom, r.bottom) - Math.max(b.top, r.top)
+      const sameLine = shared > Math.min(b.bottom - b.top, r.height) * 0.5
+      const gap = Math.max(b.left, r.left) - Math.min(b.right, r.right)
+      return sameLine && gap <= r.height
+    })
+    if (band) {
+      band.left = Math.min(band.left, r.left)
+      band.top = Math.min(band.top, r.top)
+      band.right = Math.max(band.right, r.right)
+      band.bottom = Math.max(band.bottom, r.bottom)
+    } else {
+      bands.push({ left: r.left, top: r.top, right: r.right, bottom: r.bottom })
+    }
+  }
+  return bands.map((b) => ({
+    left: b.left,
+    top: b.top,
+    width: b.right - b.left,
+    height: b.bottom - b.top,
+  }))
+}
 
 /** 손가락이 주 입력인 기기 — 여기서는 브라우저 선택 대신 직접 칠한다 */
 const COARSE_POINTER =
@@ -101,8 +154,10 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
   // 제스처 처리는 이벤트 리스너 안에서 최신 값을 봐야 한다
   const colorRef = useRef(highlightColor)
   const toolRef = useRef(readerTool)
+  const highlightsRef = useRef<Highlight[]>([])
   colorRef.current = highlightColor
   toolRef.current = readerTool
+  highlightsRef.current = highlights ?? []
 
   /** 본문(.pdf-scroll)이 화면에 있는 상태 */
   const viewerReady = !loading && !error && Boolean(pdf)
@@ -236,11 +291,12 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
     )
     if (!clientRects.length) return null
 
+    const pageIndex = Number(pageEl.dataset.page)
     return {
       text,
-      pageIndex: Number(pageEl.dataset.page),
-      rects: clientRects.map((r) => ({
-        pageIndex: Number(pageEl.dataset.page),
+      pageIndex,
+      rects: mergeLineRects(clientRects).map((r) => ({
+        pageIndex,
         left: (r.left - pageRect.left) / pageRect.width,
         top: (r.top - pageRect.top) / pageRect.height,
         width: r.width / pageRect.width,
@@ -251,6 +307,23 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
 
   const commitHighlight = useCallback(
     async (payload: SelectionPayload, color: HighlightColor) => {
+      // 이미 칠한 자리를 다시 그은 것이면 색을 덧칠하지 않고 그 하이라이트를 고쳐 쓴다
+      const area = rectsArea(payload.rects)
+      const again = highlightsRef.current.find((h) => {
+        if (h.pageIndex !== payload.pageIndex || !h.rects.length) return false
+        const shared = rectsOverlapArea(h.rects, payload.rects)
+        return isSameSpot(shared, rectsArea(h.rects), area)
+      })
+      if (again) {
+        await updateHighlightRegion(again.id, {
+          text: payload.text,
+          color,
+          rects: payload.rects,
+          pageIndex: payload.pageIndex,
+        })
+        return
+      }
+
       const { nodeId } = await createHighlight({
         documentId,
         projectId,
@@ -321,6 +394,7 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
     let hold = 0
     let origin: { x: number; y: number; pointerId: number } | null = null
     let from: CaretPoint | null = null
+    let scopeEl: Element | null = null
     let marking = false
     let pending: SelectionPayload | null = null
 
@@ -329,6 +403,7 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
       hold = 0
       origin = null
       from = null
+      scopeEl = null
       marking = false
       pending = null
       setPreview(null)
@@ -336,6 +411,8 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
 
     const beginMark = (x: number, y: number) => {
       from = caretAt(document, x, y)
+      // 시작한 페이지 안에서만 범위를 잡는다
+      scopeEl = from ? scopeOf(from, '.text-layer') : null
       if (from) marking = true
       else reset()
     }
@@ -360,10 +437,13 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
         if (Math.hypot(e.clientX - origin.x, e.clientY - origin.y) > HOLD_MOVE_TOLERANCE_PX) reset()
         return
       }
-      const to = caretAt(document, e.clientX, e.clientY)
+      const to = caretAt(document, e.clientX, e.clientY, scopeEl)
       const range = from && to ? rangeBetween(document, from, to) : null
-      pending = range ? readRange(range) : null
-      setPreview(pending)
+      const next = range ? readRange(range) : null
+      // 그림·여백을 지나가는 동안에는 직전까지 잡아 둔 범위를 지킨다
+      if (!next) return
+      pending = next
+      setPreview(next)
     }
 
     const onUp = () => {
@@ -599,16 +679,27 @@ function PdfPage({
       textLayer.innerHTML = ''
       textLayer.style.width = `${viewport.width}px`
       textLayer.style.height = `${viewport.height}px`
-      for (const box of boxes) {
+
+      const spans = boxes.map((box) => {
         const span = document.createElement('span')
         span.textContent = box.text
         span.style.left = `${box.left}px`
         span.style.top = `${box.top}px`
         span.style.fontSize = `${box.height}px`
-        span.style.width = `${box.width}px`
-        span.style.height = `${box.height}px`
         textLayer.appendChild(span)
-      }
+        return span
+      })
+
+      /*
+       * 글자는 PDF 안의 글꼴이 아니라 화면 글꼴로 깔리므로 폭이 원본과 어긋난다.
+       * 그대로 두면 선택 범위가 줄 끝까지 닿지 않거나 엉뚱한 곳까지 잡히므로
+       * 각 조각을 원본 폭에 맞춰 가로로 늘린다. (읽기를 한 번에 모아 리플로를 줄인다)
+       */
+      const widths = spans.map((span) => span.offsetWidth)
+      spans.forEach((span, i) => {
+        const width = widths[i]
+        if (width > 0) span.style.transform = `scaleX(${boxes[i].width / width})`
+      })
       onRenderedRef.current()
     })()
     return () => {
@@ -624,26 +715,38 @@ function PdfPage({
     >
       <canvas ref={canvasRef} />
       <div className="hl-layer">
-        {highlights.map((h) =>
-          h.rects.map((r, i) => (
-            <div
-              key={`${h.id}-${i}`}
-              className={`hl-rect ${isUnderlineColor(h.color) ? 'underline' : ''} ${
-                activeHighlightId === h.id ? 'active' : ''
-              }`}
-              data-highlight={h.id}
-              style={{ ...rectStyle(r), ...paintStyle(h.color) }}
-              title={h.text.slice(0, 120)}
-            />
-          )),
-        )}
-        {(previewRects ?? []).map((r, i) => (
+        {/* 한 하이라이트의 조각들은 한 겹으로 묶어 칠한다 — 이음매에서 색이 두 번 얹히지 않게 */}
+        {highlights.map((h) => (
           <div
-            key={`preview-${i}`}
-            className={`hl-rect preview ${isUnderlineColor(previewColor) ? 'underline' : ''}`}
-            style={{ ...rectStyle(r), ...paintStyle(previewColor) }}
-          />
+            key={h.id}
+            className={groupClass(h.color)}
+            style={{ opacity: groupOpacity(h.color, activeHighlightId === h.id) }}
+          >
+            {h.rects.map((r, i) => (
+              <div
+                key={`${h.id}-${i}`}
+                className={`hl-rect ${isUnderlineColor(h.color) ? 'underline' : ''}`}
+                data-highlight={h.id}
+                style={{ ...rectStyle(r), ...paintStyle(h.color) }}
+                title={h.text.slice(0, 120)}
+              />
+            ))}
+          </div>
         ))}
+        {previewRects?.length ? (
+          <div
+            className={groupClass(previewColor)}
+            style={{ opacity: groupOpacity(previewColor, true) }}
+          >
+            {previewRects.map((r, i) => (
+              <div
+                key={`preview-${i}`}
+                className={`hl-rect preview ${isUnderlineColor(previewColor) ? 'underline' : ''}`}
+                style={{ ...rectStyle(r), ...paintStyle(previewColor) }}
+              />
+            ))}
+          </div>
+        ) : null}
       </div>
       <div className="text-layer" ref={textRef} />
       <PenOverlay

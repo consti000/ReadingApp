@@ -7,16 +7,17 @@ import {
   createHighlight,
   addNodeToWorkspace,
   updateHighlightColor,
+  updateHighlightRegion,
   deleteHighlight,
 } from '@/lib/actions'
 import { useUiStore } from '@/store/uiStore'
 import { HighlightEditMenu } from '@/components/HighlightEditMenu'
 import type { AnchorPort, HighlightAnchor } from '@/lib/highlightAnchors'
-import { caretAt, rangeBetween, type CaretPoint } from '@/lib/textRange'
+import { caretAt, intersectRanges, rangeBetween, type CaretPoint } from '@/lib/textRange'
+import { isSameSpot } from '@/lib/highlightOverlap'
 import { ColorPalette } from '@/components/ColorPalette'
 import {
   HIGHLIGHT_COLORS,
-  HIGHLIGHT_OPACITY,
   isUnderlineColor,
   type Highlight,
   type HighlightColor,
@@ -232,13 +233,43 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
       }
 
       const section = bookRef.current?.spine?.get(cfi)
+      const pageIndex = typeof section?.index === 'number' ? section.index : 0
+
+      // 이미 칠한 자리를 다시 그은 것이면 색을 덧칠하지 않고 그 하이라이트를 고쳐 쓴다
+      const again = highlightsRef.current.find((h) => {
+        if (!h.cfi) return false
+        let old: Range
+        try {
+          old = contents.range(h.cfi)
+        } catch {
+          return false
+        }
+        const shared = intersectRanges(old, range)
+        if (!shared) return false
+        return isSameSpot(
+          shared.toString().trim().length,
+          old.toString().trim().length,
+          text.length,
+        )
+      })
+      if (again) {
+        await updateHighlightRegion(again.id, {
+          text,
+          color: highlightColorRef.current,
+          rects: [],
+          pageIndex,
+          cfi,
+        })
+        return
+      }
+
       const { nodeId } = await createHighlight({
         documentId,
         projectId,
         text,
         color: highlightColorRef.current,
         rects: [],
-        pageIndex: typeof section?.index === 'number' ? section.index : 0,
+        pageIndex,
         cfi,
       })
       const workspace = workspaceIdRef.current
@@ -326,8 +357,11 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
           if (Math.hypot(e.clientX - from.x, e.clientY - from.y) > TAP_MAX_MOVE_PX) clearHold()
           return
         }
-        const to = caretAt(doc, e.clientX, e.clientY)
-        markRange = to ? rangeBetween(doc, markFrom, to) : null
+        const to = caretAt(doc, e.clientX, e.clientY, doc.body)
+        const range = to ? rangeBetween(doc, markFrom, to) : null
+        // 그림·여백을 지나가는 동안에는 직전까지 잡아 둔 범위를 지킨다
+        if (!range) return
+        markRange = range
         showPreview(markRange)
       })
 
@@ -448,9 +482,13 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
             color: HIGHLIGHT_COLORS[h.color],
           })
         } else {
+          /*
+           * 조각마다 반투명하게 칠하면 조각이 맞닿는 곳마다 색이 두 번 얹혀 진해진다.
+           * 조각은 원색으로 두고 진하기는 묶음(g) 에서 한 번만 준다 — CSS 가 맡는다.
+           */
           rendition.annotations.highlight(h.cfi, { id: h.id }, undefined, HL_CLASS, {
             fill: HIGHLIGHT_COLORS[h.color],
-            'fill-opacity': String(HIGHLIGHT_OPACITY),
+            'fill-opacity': '1',
           })
         }
         appliedRef.current.set(h.cfi, h.color)

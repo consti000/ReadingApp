@@ -9,7 +9,7 @@ import {
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/lib/db'
 import { savePenStroke } from '@/lib/actions'
-import { caretAt, rangeBetween, type CaretPoint } from '@/lib/textRange'
+import { caretAt, rangeBetween, scopeOf, type CaretPoint } from '@/lib/textRange'
 import './PenOverlay.css'
 
 interface Props {
@@ -76,6 +76,7 @@ export function PenOverlay({
     velocity: number
   } | null>(null)
   const markFromRef = useRef<CaretPoint | null>(null)
+  const markScopeRef = useRef<Element | null>(null)
   const holdTimerRef = useRef(0)
   const flickRef = useRef(0)
   const onMarkChangeRef = useRef(onMarkChange)
@@ -106,8 +107,10 @@ export function PenOverlay({
   const markMove = useCallback((e: PointerEvent) => {
     const from = markFromRef.current
     if (!from) return
-    const to = caretAt(document, e.clientX, e.clientY)
-    onMarkChangeRef.current?.(to ? rangeBetween(document, from, to) : null)
+    const to = caretAt(document, e.clientX, e.clientY, markScopeRef.current)
+    const range = to ? rangeBetween(document, from, to) : null
+    // 여백을 지나가는 동안에는 직전까지 잡아 둔 범위를 지킨다
+    if (range) onMarkChangeRef.current?.(range)
   }, [])
 
   const markEnd = useCallback(() => {
@@ -115,6 +118,7 @@ export function PenOverlay({
     window.removeEventListener('pointerup', markEnd)
     window.removeEventListener('pointercancel', markEnd)
     markFromRef.current = null
+    markScopeRef.current = null
     // CSS 가 정하는 값으로 되돌린다 (필기 모드면 auto)
     if (svgRef.current) svgRef.current.style.pointerEvents = ''
     onMarkCommitRef.current?.()
@@ -130,7 +134,10 @@ export function PenOverlay({
       const svg = svgRef.current
       if (!svg) return
       svg.style.pointerEvents = 'none'
-      markFromRef.current = caretAt(document, x, y)
+      const start = caretAt(document, x, y)
+      markFromRef.current = start
+      // 시작한 페이지 안에서만 범위를 잡는다
+      markScopeRef.current = start ? scopeOf(start, '.text-layer') : null
       window.addEventListener('pointermove', markMove)
       window.addEventListener('pointerup', markEnd)
       window.addEventListener('pointercancel', markEnd)
