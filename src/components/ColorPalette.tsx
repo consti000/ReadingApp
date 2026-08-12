@@ -26,11 +26,13 @@ export function ColorPalette({ value, onPick }: Props) {
           <button
             key={c}
             className={`color-dot ${underline ? 'underline' : ''} ${value === c ? 'active' : ''}`}
-            // 밑줄 범례는 아래쪽 선으로만 보여 준다 (currentColor 를 CSS 가 쓴다)
+            // 밑줄 범례는 글자 U 와 그 아래 선으로 보여 준다 (currentColor 를 CSS 가 쓴다)
             style={underline ? { color: HIGHLIGHT_COLORS[c] } : { background: HIGHLIGHT_COLORS[c] }}
             title={LABELS[c]}
             onClick={() => onPick(c)}
-          />
+          >
+            {underline ? 'U' : null}
+          </button>
         )
       })}
     </div>

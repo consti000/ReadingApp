@@ -171,10 +171,29 @@ a {
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
 }
 
-/* 밑줄 범례 — 칠하는 색이 아니라 아래에 긋는 선으로 보여 준다 */
+/* 밑줄 범례 — 글자 U 와 그 아래 선으로, 무엇을 하는 표시인지 그림으로 보여 준다 */
 .color-dot.underline {
+  position: relative;
+  display: grid;
+  place-items: start center;
   border-radius: 3px;
-  background: linear-gradient(to bottom, transparent 64%, currentColor 64%);
+  background: none;
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  color: currentColor;
+}
+
+.color-dot.underline::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  border-radius: 1px;
+  background: currentColor;
 }
 
 .input {

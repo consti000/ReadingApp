@@ -52,8 +52,10 @@ interface SelectionPayload {
   rects: Rect[]
 }
 
-/** 필기도 하이라이트와 같은 범례 색을 쓴다 */
-const PEN_COLORS = Object.values(HIGHLIGHT_COLORS)
+/** 필기 색(색상값)이 범례의 어느 칸인지 */
+const penColorKey = (hex: string): HighlightColor =>
+  (Object.keys(HIGHLIGHT_COLORS) as HighlightColor[]).find((c) => HIGHLIGHT_COLORS[c] === hex) ??
+  'yellow'
 
 const rectStyle = (r: Rect) => ({
   left: `${r.left * 100}%`,
@@ -624,14 +626,11 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
           <ColorPalette value={highlightColor} onPick={setHighlightColor} />
         ) : (
           <div className="color-row">
-            {PEN_COLORS.map((c) => (
-              <button
-                key={c}
-                className={`color-dot ${penColor === c ? 'active' : ''}`}
-                style={{ background: c }}
-                onClick={() => setPenColor(c)}
-              />
-            ))}
+            {/* 필기 범례도 하이라이트와 같은 모양을 쓴다 */}
+            <ColorPalette
+              value={penColorKey(penColor)}
+              onPick={(c) => setPenColor(HIGHLIGHT_COLORS[c])}
+            />
             <button
               className="btn btn-sm"
               onClick={() => void deleteLastPenStroke(documentId)}
