@@ -7,7 +7,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type RefObject,
 } from 'react'
-import type { PDFDocumentProxy } from 'pdfjs-dist'
+import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from 'pdfjs-dist'
 import { loadPdfDocument, getPageTextBoxes } from '@/lib/pdf'
 import { loadDocument } from '@/lib/opfs'
 import {
@@ -120,6 +120,12 @@ function mergeLineRects(rects: DOMRect[]): { left: number; top: number; width: n
 const COARSE_POINTER =
   typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches === true
 
+/**
+ * 화면 위아래로 이만큼까지만 미리 그려 두고, 그 밖으로 나간 페이지는 지운다.
+ * 모든 장을 한꺼번에 그리면 그림 한 장마다 수 MB 씩 쌓여 긴 문서에서 탭이 메모리 부족으로 죽는다.
+ */
+const KEEP_DRAWN_MARGIN_PX = 1200
+
 /** 이만큼 제자리에서 누르고 있으면 넘기기가 아니라 색칠로 넘어간다 */
 const HOLD_TO_MARK_MS = 380
 const HOLD_MOVE_TOLERANCE_PX = 12
@@ -127,6 +133,8 @@ const HOLD_MOVE_TOLERANCE_PX = 12
 export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null)
+  /** 배율 1 기준 첫 장 크기 — 아직 그리지 않은 페이지의 자리를 잡는 데 쓴다 */
+  const [pageBox, setPageBox] = useState<{ w: number; h: number } | null>(null)
   const [scale, setScale] = useState(1.15)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -162,8 +170,74 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
   /** 본문(.pdf-scroll)이 화면에 있는 상태 */
   const viewerReady = !loading && !error && Boolean(pdf)
 
+  /*
+   * 지금 그려 둘 페이지 구간.
+   * 페이지는 위에서 아래로 차례로 놓이므로, 화면에 걸치는 첫 장과 마지막 장을
+   * 이분 탐색으로 찾는다. 300 쪽짜리라도 스크롤 한 번에 열 번 남짓만 재면 된다.
+   */
+  const [drawRange, setDrawRange] = useState({ from: 0, to: 1 })
+  const pageHosts = useRef(new Map<number, HTMLDivElement>())
+  const rangeRafRef = useRef(0)
+
+  const bindPageHost = useCallback((index: number, el: HTMLDivElement | null) => {
+    if (el) pageHosts.current.set(index, el)
+    else pageHosts.current.delete(index)
+  }, [])
+
+  const measureDrawRange = useCallback(() => {
+    const scroll = containerRef.current
+    const last = (pdf?.numPages ?? 0) - 1
+    if (!scroll || last < 0) return
+
+    const view = scroll.getBoundingClientRect()
+    const top = view.top - KEEP_DRAWN_MARGIN_PX
+    const bottom = view.bottom + KEEP_DRAWN_MARGIN_PX
+    const rectOf = (i: number) => pageHosts.current.get(i)?.getBoundingClientRect() ?? null
+
+    const search = (keep: (i: number) => boolean) => {
+      let lo = 0
+      let hi = last
+      let found = last
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1
+        if (keep(mid)) {
+          found = mid
+          hi = mid - 1
+        } else lo = mid + 1
+      }
+      return found
+    }
+
+    // 아래쪽 끝이 화면 위 경계를 지난 첫 장 / 위쪽 끝이 아래 경계를 넘어선 첫 장
+    const from = search((i) => (rectOf(i)?.bottom ?? Infinity) >= top)
+    const after = search((i) => (rectOf(i)?.top ?? Infinity) > bottom)
+    const to = Math.max(from, Math.min(last, after - 1))
+
+    setDrawRange((prev) => (prev.from === from && prev.to === to ? prev : { from, to }))
+  }, [pdf])
+
+  const scheduleDrawRange = useCallback(() => {
+    if (rangeRafRef.current) return
+    rangeRafRef.current = requestAnimationFrame(() => {
+      rangeRafRef.current = 0
+      measureDrawRange()
+    })
+  }, [measureDrawRange])
+
+  useEffect(() => {
+    if (!viewerReady) return
+    scheduleDrawRange()
+    window.addEventListener('resize', scheduleDrawRange)
+    return () => {
+      window.removeEventListener('resize', scheduleDrawRange)
+      if (rangeRafRef.current) cancelAnimationFrame(rangeRafRef.current)
+      rangeRafRef.current = 0
+    }
+  }, [viewerReady, scale, scheduleDrawRange])
+
   useEffect(() => {
     let cancelled = false
+    let opened: PDFDocumentProxy | null = null
     ;(async () => {
       setLoading(true)
       setError(null)
@@ -172,10 +246,20 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
         if (!blob) throw new Error('PDF 파일을 찾을 수 없습니다 (OPFS)')
         const buf = await blob.arrayBuffer()
         const doc = await loadPdfDocument(new Uint8Array(buf))
-        if (!cancelled) {
-          setPdf(doc)
-          await db.documents.update(documentId, { pageCount: doc.numPages })
+        if (cancelled) {
+          void doc.destroy()
+          return
         }
+        opened = doc
+
+        // 아직 그리지 않은 페이지도 자리는 잡아 둬야 하므로 첫 장 크기를 재 둔다
+        const first = await doc.getPage(1)
+        const box = first.getViewport({ scale: 1 })
+        if (cancelled) return
+
+        setPageBox({ w: box.width, h: box.height })
+        setPdf(doc)
+        await db.documents.update(documentId, { pageCount: doc.numPages })
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : 'PDF 로드 실패')
       } finally {
@@ -184,6 +268,8 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
     })()
     return () => {
       cancelled = true
+      // 문서를 닫을 때 워커가 쥐고 있던 페이지·글꼴 자료까지 함께 놓아준다
+      void opened?.destroy()
     }
   }, [documentId])
 
@@ -549,7 +635,10 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
         onMouseUp={captureSelection}
         onTouchEnd={() => setTimeout(captureSelection, 50)}
         onClick={handleClick}
-        onScroll={() => anchorPort?.invalidate()}
+        onScroll={() => {
+          anchorPort?.invalidate()
+          scheduleDrawRange()
+        }}
       >
         {Array.from({ length: pdf.numPages }, (_, i) => (
           <PdfPage
@@ -557,6 +646,9 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
             pdf={pdf}
             pageIndex={i}
             scale={scale}
+            pageBox={pageBox}
+            near={i >= drawRange.from && i <= drawRange.to}
+            onHost={(el) => bindPageHost(i, el)}
             documentId={documentId}
             projectId={projectId}
             penEnabled={readerTool === 'pen'}
@@ -568,7 +660,11 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
             previewRects={preview?.pageIndex === i ? preview.rects : null}
             previewColor={highlightColor}
             activeHighlightId={activeHighlightId}
-            onRendered={() => anchorPort?.invalidate()}
+            onRendered={() => {
+              anchorPort?.invalidate()
+              // 실제 크기가 자리표시보다 크거나 작았다면 그릴 구간도 달라진다
+              scheduleDrawRange()
+            }}
           />
         ))}
       </div>
@@ -617,6 +713,9 @@ function PdfPage({
   pdf,
   pageIndex,
   scale,
+  pageBox,
+  near,
+  onHost,
   highlights,
   documentId,
   projectId,
@@ -633,6 +732,10 @@ function PdfPage({
   pdf: PDFDocumentProxy
   pageIndex: number
   scale: number
+  pageBox: { w: number; h: number } | null
+  /** 화면 가까이 있어 그려 둘 페이지인지 */
+  near: boolean
+  onHost: (el: HTMLDivElement | null) => void
   highlights: Highlight[]
   documentId: string
   projectId: string
@@ -648,17 +751,21 @@ function PdfPage({
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const textRef = useRef<HTMLDivElement>(null)
-  const [size, setSize] = useState({ w: 0, h: 0 })
+  const [size, setSize] = useState<{ w: number; h: number; scale: number } | null>(null)
   const onRenderedRef = useRef(onRendered)
   onRenderedRef.current = onRendered
 
   useEffect(() => {
+    if (!near) return
     let cancelled = false
+    let drawing: RenderTask | null = null
+    let opened: PDFPageProxy | null = null
     ;(async () => {
       const page = await pdf.getPage(pageIndex + 1)
+      opened = page
       const viewport = page.getViewport({ scale })
       if (cancelled) return
-      setSize({ w: viewport.width, h: viewport.height })
+      setSize({ w: viewport.width, h: viewport.height, scale })
 
       const canvas = canvasRef.current
       const textLayer = textRef.current
@@ -666,14 +773,22 @@ function PdfPage({
 
       const ctx = canvas.getContext('2d')
       if (!ctx) return
-      const dpr = window.devicePixelRatio || 1
+      // 화면 배율이 높은 기기에서 그림 한 장이 지나치게 커지지 않게 막는다
+      const dpr = Math.min(window.devicePixelRatio || 1, 2)
       canvas.width = viewport.width * dpr
       canvas.height = viewport.height * dpr
       canvas.style.width = `${viewport.width}px`
       canvas.style.height = `${viewport.height}px`
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
 
-      await page.render({ canvasContext: ctx, viewport }).promise
+      drawing = page.render({ canvasContext: ctx, viewport })
+      try {
+        await drawing.promise
+      } catch {
+        // 화면 밖으로 나가 그리기를 멈춘 경우
+        return
+      }
+      if (cancelled) return
 
       const boxes = await getPageTextBoxes(page, scale)
       textLayer.innerHTML = ''
@@ -704,15 +819,31 @@ function PdfPage({
     })()
     return () => {
       cancelled = true
+      drawing?.cancel()
+      // 그림 자료를 쥔 채로 두면 긴 문서에서 메모리가 계속 쌓인다
+      opened?.cleanup()
+      const canvas = canvasRef.current
+      if (canvas) {
+        canvas.width = 0
+        canvas.height = 0
+      }
     }
-  }, [pdf, pageIndex, scale])
+  }, [pdf, pageIndex, scale, near])
+
+  // 배율을 바꾼 뒤에는 지난번에 잰 크기를 쓸 수 없으므로 첫 장 크기로 자리를 잡는다
+  const measured = size?.scale === scale ? size : null
+  const box = {
+    width: measured?.w ?? (pageBox ? pageBox.w * scale : undefined),
+    height: measured?.h ?? (pageBox ? pageBox.h * scale : undefined),
+  }
+
+  // 멀리 있는 페이지는 자리만 남긴다 — 그림을 들고 있으면 메모리가 계속 쌓인다
+  if (!near) {
+    return <div className="pdf-page" data-page={pageIndex} ref={onHost} style={box} />
+  }
 
   return (
-    <div
-      className="pdf-page"
-      data-page={pageIndex}
-      style={{ width: size.w || undefined, height: size.h || undefined }}
-    >
+    <div className="pdf-page" data-page={pageIndex} ref={onHost} style={box}>
       <canvas ref={canvasRef} />
       <div className="hl-layer">
         {/* 한 하이라이트의 조각들은 한 겹으로 묶어 칠한다 — 이음매에서 색이 두 번 얹히지 않게 */}

@@ -43,6 +43,8 @@
 
 .pdf-page {
   position: relative;
+  /* 아직 그리지 않은 페이지도 제 높이를 지켜야 스크롤 길이가 문서 전체와 맞는다 */
+  flex: 0 0 auto;
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.45);
   background: #fff;
 }
