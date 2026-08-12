@@ -99,23 +99,37 @@
   box-shadow: none;
 }
 
+/* 크기와 글자 위치는 pdf.js 가 정한다 (여기서는 겹치는 방식만 정해 둔다) */
 .text-layer {
   position: absolute;
-  inset: 0;
+  left: 0;
+  top: 0;
   z-index: 2;
   line-height: 1;
-  overflow: hidden;
-  opacity: 0.15;
-  user-select: text;
+  overflow: clip;
+  text-align: initial;
+  -webkit-text-size-adjust: none;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
   -webkit-user-select: text;
+  user-select: text;
 }
 
-.text-layer span {
+.text-layer span,
+.text-layer br {
   position: absolute;
   white-space: pre;
   color: transparent;
   transform-origin: 0% 0%;
   cursor: text;
+}
+
+/* 묶음 표시용 껍데기는 자리를 차지하지 않는다 */
+.text-layer .markedContent {
+  top: 0;
+  height: 0;
+  width: 0;
 }
 
 /*

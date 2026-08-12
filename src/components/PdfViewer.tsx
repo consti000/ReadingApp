@@ -7,8 +7,9 @@ import {
   type PointerEvent as ReactPointerEvent,
   type RefObject,
 } from 'react'
+import { TextLayer } from 'pdfjs-dist'
 import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from 'pdfjs-dist'
-import { loadPdfDocument, getPageTextBoxes } from '@/lib/pdf'
+import { loadPdfDocument } from '@/lib/pdf'
 import { loadDocument } from '@/lib/opfs'
 import {
   createHighlight,
@@ -114,6 +115,30 @@ function mergeLineRects(rects: DOMRect[]): { left: number; top: number; width: n
     width: b.right - b.left,
     height: b.bottom - b.top,
   }))
+}
+
+/** 그 위치가 놓인 페이지 */
+function pageOf(node: Node): HTMLElement | null {
+  const el = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement
+  return (el?.closest('[data-page]') as HTMLElement | null) ?? null
+}
+
+/** 범위에서 그 요소 안에 든 부분만 남긴다 */
+function clipToElement(range: Range, el: Element): Range | null {
+  const bounds = range.cloneRange()
+  bounds.selectNodeContents(el)
+  const clipped = range.cloneRange()
+  try {
+    if (clipped.compareBoundaryPoints(Range.START_TO_START, bounds) < 0) {
+      clipped.setStart(bounds.startContainer, bounds.startOffset)
+    }
+    if (clipped.compareBoundaryPoints(Range.END_TO_END, bounds) > 0) {
+      clipped.setEnd(bounds.endContainer, bounds.endOffset)
+    }
+  } catch {
+    return null
+  }
+  return clipped.collapsed ? null : clipped
 }
 
 /** 손가락이 주 입력인 기기 — 여기서는 브라우저 선택 대신 직접 칠한다 */
@@ -361,18 +386,22 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
 
   /** 글자 범위를 페이지 비율 좌표로 옮긴다 (한 페이지 안에서만) */
   const readRange = useCallback((range: Range): SelectionPayload | null => {
-    const text = range.toString().trim()
-    if (!text) return null
-
-    const start = range.startContainer
-    const host = start.nodeType === Node.ELEMENT_NODE ? (start as Element) : start.parentElement
-    const pageEl = host?.closest('[data-page]') as HTMLElement | null
+    const pageEl = pageOf(range.startContainer) ?? pageOf(range.endContainer)
     if (!pageEl) return null
+
+    /*
+     * 마우스로 끌면 아래 페이지나 옆 목록까지 함께 잡히기 쉽다.
+     * 그대로 두면 다른 페이지의 글자까지 한 페이지 좌표로 접혀 엉뚱한 자리가 칠해지므로,
+     * 시작한 페이지 안쪽만 남기고 잘라 낸다.
+     */
+    const onPage = clipToElement(range, pageEl.querySelector('.text-layer') ?? pageEl)
+    const text = onPage?.toString().trim()
+    if (!onPage || !text) return null
 
     const pageRect = pageEl.getBoundingClientRect()
     if (pageRect.width < 1 || pageRect.height < 1) return null
 
-    const clientRects = Array.from(range.getClientRects()).filter(
+    const clientRects = Array.from(onPage.getClientRects()).filter(
       (r) => r.width > 0.5 && r.height > 0.5,
     )
     if (!clientRects.length) return null
@@ -759,6 +788,7 @@ function PdfPage({
     if (!near) return
     let cancelled = false
     let drawing: RenderTask | null = null
+    let writing: TextLayer | null = null
     let opened: PDFPageProxy | null = null
     ;(async () => {
       const page = await pdf.getPage(pageIndex + 1)
@@ -790,36 +820,31 @@ function PdfPage({
       }
       if (cancelled) return
 
-      const boxes = await getPageTextBoxes(page, scale)
-      textLayer.innerHTML = ''
-      textLayer.style.width = `${viewport.width}px`
-      textLayer.style.height = `${viewport.height}px`
-
-      const spans = boxes.map((box) => {
-        const span = document.createElement('span')
-        span.textContent = box.text
-        span.style.left = `${box.left}px`
-        span.style.top = `${box.top}px`
-        span.style.fontSize = `${box.height}px`
-        textLayer.appendChild(span)
-        return span
-      })
+      const content = await page.getTextContent()
+      if (cancelled) return
 
       /*
-       * 글자는 PDF 안의 글꼴이 아니라 화면 글꼴로 깔리므로 폭이 원본과 어긋난다.
-       * 그대로 두면 선택 범위가 줄 끝까지 닿지 않거나 엉뚱한 곳까지 잡히므로
-       * 각 조각을 원본 폭에 맞춰 가로로 늘린다. (읽기를 한 번에 모아 리플로를 줄인다)
+       * 글자를 짚는 투명한 층은 pdf.js 것을 그대로 쓴다.
+       * 직접 깔면 글자가 그림보다 글꼴 높이의 20% 남짓 위에 놓여, 눈에 보이는 줄을 짚어도
+       * 윗줄이 잡히곤 한다. pdf.js 는 화면 글꼴의 실제 윗선(ascent)을 재서 높이를 맞추고,
+       * 원본 글꼴 종류(고딕·명조·고정폭)와 조각별 가로 배율까지 반영한다.
        */
-      const widths = spans.map((span) => span.offsetWidth)
-      spans.forEach((span, i) => {
-        const width = widths[i]
-        if (width > 0) span.style.transform = `scaleX(${boxes[i].width / width})`
-      })
+      textLayer.replaceChildren()
+      textLayer.style.setProperty('--scale-factor', String(scale))
+      const words = new TextLayer({ textContentSource: content, container: textLayer, viewport })
+      writing = words
+      try {
+        await words.render()
+      } catch {
+        // 화면 밖으로 나가 멈춘 경우
+        return
+      }
       onRenderedRef.current()
     })()
     return () => {
       cancelled = true
       drawing?.cancel()
+      writing?.cancel()
       // 그림 자료를 쥔 채로 두면 긴 문서에서 메모리가 계속 쌓인다
       opened?.cleanup()
       const canvas = canvasRef.current
