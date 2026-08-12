@@ -625,19 +625,11 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
         {readerTool === 'highlight' ? (
           <ColorPalette value={highlightColor} onPick={setHighlightColor} />
         ) : (
-          <div className="color-row">
-            {/* 필기 범례도 하이라이트와 같은 모양을 쓴다 */}
-            <ColorPalette
-              value={penColorKey(penColor)}
-              onPick={(c) => setPenColor(HIGHLIGHT_COLORS[c])}
-            />
-            <button
-              className="btn btn-sm"
-              onClick={() => void deleteLastPenStroke(documentId)}
-            >
-              필기 되돌리기
-            </button>
-          </div>
+          /* 필기 범례도 하이라이트와 같은 모양을 쓴다 */
+          <ColorPalette
+            value={penColorKey(penColor)}
+            onPick={(c) => setPenColor(HIGHLIGHT_COLORS[c])}
+          />
         )}
         <div className="zoom-row">
           <button className="btn btn-sm" onClick={() => setScale((s) => Math.max(0.6, s - 0.1))}>
@@ -648,6 +640,11 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
             +
           </button>
         </div>
+        {readerTool === 'pen' && (
+          <button className="btn btn-sm" onClick={() => void deleteLastPenStroke(documentId)}>
+            필기 되돌리기
+          </button>
+        )}
         <span className="pdf-hint">
           {readerTool === 'pen'
             ? 'S펜 압력 필기 · 손가락으로 넘기기 · 펜 버튼 누르고 긋거나 손가락 길게 누르면 하이라이트'
