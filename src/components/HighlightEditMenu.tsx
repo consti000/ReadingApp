@@ -1,5 +1,6 @@
 import { useEffect, type PointerEvent as ReactPointerEvent } from 'react'
-import { HIGHLIGHT_COLORS, type HighlightColor } from '@/types'
+import { ColorPalette } from '@/components/ColorPalette'
+import type { HighlightColor } from '@/types'
 import './HighlightEditMenu.css'
 
 interface Props {
@@ -11,8 +12,6 @@ interface Props {
   onDelete: () => void
   onClose: () => void
 }
-
-const COLORS = Object.keys(HIGHLIGHT_COLORS) as HighlightColor[]
 
 /** 본문 하이라이트를 탭했을 때 뜨는 색 변경·삭제 메뉴 */
 export function HighlightEditMenu({ x, y, color, onPick, onDelete, onClose }: Props) {
@@ -33,17 +32,7 @@ export function HighlightEditMenu({ x, y, color, onPick, onDelete, onClose }: Pr
       }}
       onPointerDown={(e: ReactPointerEvent) => e.stopPropagation()}
     >
-      <div className="color-row">
-        {COLORS.map((c) => (
-          <button
-            key={c}
-            className={`color-dot ${color === c ? 'active' : ''}`}
-            style={{ background: HIGHLIGHT_COLORS[c] }}
-            title={c}
-            onClick={() => onPick(c)}
-          />
-        ))}
-      </div>
+      <ColorPalette value={color} onPick={onPick} />
       <button className="btn btn-sm btn-danger" onClick={onDelete}>
         삭제
       </button>

@@ -171,6 +171,12 @@ a {
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
 }
 
+/* 밑줄 범례 — 칠하는 색이 아니라 아래에 긋는 선으로 보여 준다 */
+.color-dot.underline {
+  border-radius: 3px;
+  background: linear-gradient(to bottom, transparent 64%, currentColor 64%);
+}
+
 .input {
   width: 100%;
   padding: 0.55rem 0.75rem;

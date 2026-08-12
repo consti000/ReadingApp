@@ -23,7 +23,15 @@ import { useUiStore } from '@/store/uiStore'
 import { PenOverlay } from '@/components/PenOverlay'
 import { HighlightEditMenu } from '@/components/HighlightEditMenu'
 import type { AnchorPort, HighlightAnchor } from '@/lib/highlightAnchors'
-import { HIGHLIGHT_COLORS, type Highlight, type HighlightColor, type Rect } from '@/types'
+import { caretAt, rangeBetween, type CaretPoint } from '@/lib/textRange'
+import { ColorPalette } from '@/components/ColorPalette'
+import {
+  HIGHLIGHT_COLORS,
+  isUnderlineColor,
+  type Highlight,
+  type HighlightColor,
+  type Rect,
+} from '@/types'
 import './PdfViewer.css'
 
 interface Props {
@@ -42,6 +50,27 @@ interface SelectionPayload {
 
 const PEN_COLORS = ['#e8c547', '#7dcea0', '#85c1e9', '#f5b7b1', '#1a2332']
 
+const rectStyle = (r: Rect) => ({
+  left: `${r.left * 100}%`,
+  top: `${r.top * 100}%`,
+  width: `${r.width * 100}%`,
+  height: `${r.height * 100}%`,
+})
+
+/** 밑줄 범례는 칠하지 않고 아래 선 색만 정한다 */
+const paintStyle = (color: HighlightColor) =>
+  isUnderlineColor(color)
+    ? { borderBottomColor: HIGHLIGHT_COLORS[color] }
+    : { background: HIGHLIGHT_COLORS[color] }
+
+/** 손가락이 주 입력인 기기 — 여기서는 브라우저 선택 대신 직접 칠한다 */
+const COARSE_POINTER =
+  typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches === true
+
+/** 이만큼 제자리에서 누르고 있으면 넘기기가 아니라 색칠로 넘어간다 */
+const HOLD_TO_MARK_MS = 380
+const HOLD_MOVE_TOLERANCE_PX = 12
+
 export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null)
@@ -51,6 +80,8 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
   const [selection, setSelection] = useState<SelectionPayload | null>(null)
   const [selMenu, setSelMenu] = useState<{ x: number; y: number } | null>(null)
   const [editing, setEditing] = useState<{ id: string; x: number; y: number } | null>(null)
+  /** 손끝을 따라 칠해질 자리를 미리 보여 준다 */
+  const [preview, setPreview] = useState<SelectionPayload | null>(null)
 
   const highlightColor = useUiStore((s) => s.highlightColor)
   const setHighlightColor = useUiStore((s) => s.setHighlightColor)
@@ -66,6 +97,15 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
     () => db.highlights.where('documentId').equals(documentId).toArray(),
     [documentId],
   )
+
+  // 제스처 처리는 이벤트 리스너 안에서 최신 값을 봐야 한다
+  const colorRef = useRef(highlightColor)
+  const toolRef = useRef(readerTool)
+  colorRef.current = highlightColor
+  toolRef.current = readerTool
+
+  /** 본문(.pdf-scroll)이 화면에 있는 상태 */
+  const viewerReady = !loading && !error && Boolean(pdf)
 
   useEffect(() => {
     let cancelled = false
@@ -178,6 +218,59 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
     if (editing && highlights && !highlights.some((h) => h.id === editing.id)) setEditing(null)
   }, [editing, highlights])
 
+  /** 글자 범위를 페이지 비율 좌표로 옮긴다 (한 페이지 안에서만) */
+  const readRange = useCallback((range: Range): SelectionPayload | null => {
+    const text = range.toString().trim()
+    if (!text) return null
+
+    const start = range.startContainer
+    const host = start.nodeType === Node.ELEMENT_NODE ? (start as Element) : start.parentElement
+    const pageEl = host?.closest('[data-page]') as HTMLElement | null
+    if (!pageEl) return null
+
+    const pageRect = pageEl.getBoundingClientRect()
+    if (pageRect.width < 1 || pageRect.height < 1) return null
+
+    const clientRects = Array.from(range.getClientRects()).filter(
+      (r) => r.width > 0.5 && r.height > 0.5,
+    )
+    if (!clientRects.length) return null
+
+    return {
+      text,
+      pageIndex: Number(pageEl.dataset.page),
+      rects: clientRects.map((r) => ({
+        pageIndex: Number(pageEl.dataset.page),
+        left: (r.left - pageRect.left) / pageRect.width,
+        top: (r.top - pageRect.top) / pageRect.height,
+        width: r.width / pageRect.width,
+        height: r.height / pageRect.height,
+      })),
+    }
+  }, [])
+
+  const commitHighlight = useCallback(
+    async (payload: SelectionPayload, color: HighlightColor) => {
+      const { nodeId } = await createHighlight({
+        documentId,
+        projectId,
+        text: payload.text,
+        color,
+        rects: payload.rects,
+        pageIndex: payload.pageIndex,
+      })
+      if (workspaceId) {
+        await addNodeToWorkspace(
+          workspaceId,
+          nodeId,
+          60 + Math.random() * 120,
+          60 + Math.random() * 80,
+        )
+      }
+    },
+    [documentId, projectId, workspaceId],
+  )
+
   const captureSelection = useCallback(() => {
     const sel = window.getSelection()
     if (!sel || sel.isCollapsed || !sel.rangeCount) {
@@ -186,50 +279,129 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
       return
     }
     const range = sel.getRangeAt(0)
-    const text = sel.toString().trim()
-    if (!text) return
+    const payload = readRange(range)
+    if (!payload) return
 
-    const pageEl = (range.commonAncestorContainer as Element).parentElement?.closest(
-      '[data-page]',
-    ) as HTMLElement | null
-    if (!pageEl) return
-    const pageIndex = Number(pageEl.dataset.page)
-    const pageRect = pageEl.getBoundingClientRect()
     const clientRects = Array.from(range.getClientRects())
-    if (!clientRects.length) return
-
-    const rects: Rect[] = clientRects.map((r) => ({
-      pageIndex,
-      left: (r.left - pageRect.left) / pageRect.width,
-      top: (r.top - pageRect.top) / pageRect.height,
-      width: r.width / pageRect.width,
-      height: r.height / pageRect.height,
-    }))
-
     const last = clientRects[clientRects.length - 1]
-    setSelection({ text, pageIndex, rects })
+    setSelection(payload)
     setSelMenu({ x: last.right, y: last.bottom + 8 })
     // 새로 고른 텍스트가 있으면 열려 있던 편집 메뉴는 비켜준다
     setEditing(null)
-  }, [])
+  }, [readRange])
+
+  /** 필기 오버레이가 대신 잡아 준 범위 (펜 버튼·길게 누르기) */
+  const markRef = useRef<SelectionPayload | null>(null)
+
+  const handleMarkChange = useCallback(
+    (range: Range | null) => {
+      const payload = range ? readRange(range) : null
+      markRef.current = payload
+      setPreview(payload)
+    },
+    [readRange],
+  )
+
+  const handleMarkCommit = useCallback(() => {
+    const payload = markRef.current
+    markRef.current = null
+    setPreview(null)
+    if (payload) void commitHighlight(payload, colorRef.current)
+  }, [commitHighlight])
+
+  /*
+   * 태블릿에서 브라우저 선택은 OS 선택 핸들과 복사·공유 메뉴를 함께 불러오고,
+   * 조각조각 얹어 둔 PDF 글자 위에서는 범위도 잘 잡히지 않는다.
+   * 그래서 제자리에서 잠깐 누른 뒤(펜은 곧바로) 그은 구간을 읽어 바로 칠한다.
+   */
+  useEffect(() => {
+    const scroll = containerRef.current
+    if (!scroll) return
+
+    let hold = 0
+    let origin: { x: number; y: number; pointerId: number } | null = null
+    let from: CaretPoint | null = null
+    let marking = false
+    let pending: SelectionPayload | null = null
+
+    const reset = () => {
+      if (hold) window.clearTimeout(hold)
+      hold = 0
+      origin = null
+      from = null
+      marking = false
+      pending = null
+      setPreview(null)
+    }
+
+    const beginMark = (x: number, y: number) => {
+      from = caretAt(document, x, y)
+      if (from) marking = true
+      else reset()
+    }
+
+    const onDown = (e: PointerEvent) => {
+      // 마우스는 브라우저 선택이 잘 듣기 때문에 그대로 둔다
+      if (toolRef.current !== 'highlight' || e.pointerType === 'mouse' || !e.isPrimary) return
+      reset()
+      origin = { x: e.clientX, y: e.clientY, pointerId: e.pointerId }
+      if (e.pointerType === 'pen') beginMark(e.clientX, e.clientY)
+      else
+        hold = window.setTimeout(() => {
+          hold = 0
+          if (origin) beginMark(origin.x, origin.y)
+        }, HOLD_TO_MARK_MS)
+    }
+
+    const onMove = (e: PointerEvent) => {
+      if (!origin || e.pointerId !== origin.pointerId) return
+      if (!marking) {
+        // 누르고 있는 사이에 움직였다면 페이지를 넘기려는 손짓이다
+        if (Math.hypot(e.clientX - origin.x, e.clientY - origin.y) > HOLD_MOVE_TOLERANCE_PX) reset()
+        return
+      }
+      const to = caretAt(document, e.clientX, e.clientY)
+      const range = from && to ? rangeBetween(document, from, to) : null
+      pending = range ? readRange(range) : null
+      setPreview(pending)
+    }
+
+    const onUp = () => {
+      const payload = marking ? pending : null
+      reset()
+      if (!payload) return
+      // 펜 드래그가 브라우저 선택까지 남겼다면 함께 지운다
+      window.getSelection()?.removeAllRanges()
+      void commitHighlight(payload, colorRef.current)
+    }
+
+    // 칠하기가 시작된 뒤에는 화면이 따라 흐르지 않아야 한다
+    const onTouchMove = (e: TouchEvent) => {
+      if (marking) e.preventDefault()
+    }
+
+    scroll.addEventListener('pointerdown', onDown)
+    scroll.addEventListener('pointermove', onMove)
+    scroll.addEventListener('pointerup', onUp)
+    scroll.addEventListener('pointercancel', reset)
+    scroll.addEventListener('touchmove', onTouchMove, { passive: false })
+    return () => {
+      scroll.removeEventListener('pointerdown', onDown)
+      scroll.removeEventListener('pointermove', onMove)
+      scroll.removeEventListener('pointerup', onUp)
+      scroll.removeEventListener('pointercancel', reset)
+      scroll.removeEventListener('touchmove', onTouchMove)
+      if (hold) window.clearTimeout(hold)
+    }
+    // 본문 영역은 로딩이 끝난 뒤에야 생기므로 그 시점에 붙어야 한다
+  }, [readRange, commitHighlight, viewerReady])
 
   const applyHighlight = async () => {
     if (!selection) return
-    const { highlightId, nodeId } = await createHighlight({
-      documentId,
-      projectId,
-      text: selection.text,
-      color: highlightColor,
-      rects: selection.rects,
-      pageIndex: selection.pageIndex,
-    })
-    if (workspaceId) {
-      await addNodeToWorkspace(workspaceId, nodeId, 60 + Math.random() * 120, 60 + Math.random() * 80)
-    }
+    await commitHighlight(selection, highlightColor)
     window.getSelection()?.removeAllRanges()
     setSelection(null)
     setSelMenu(null)
-    void highlightId
   }
 
   if (loading) return <div className="pdf-status">PDF 불러오는 중…</div>
@@ -254,17 +426,7 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
           </button>
         </div>
         {readerTool === 'highlight' ? (
-          <div className="color-row">
-            {(Object.keys(HIGHLIGHT_COLORS) as HighlightColor[]).map((c) => (
-              <button
-                key={c}
-                className={`color-dot ${highlightColor === c ? 'active' : ''}`}
-                style={{ background: HIGHLIGHT_COLORS[c] }}
-                title={c}
-                onClick={() => setHighlightColor(c)}
-              />
-            ))}
-          </div>
+          <ColorPalette value={highlightColor} onPick={setHighlightColor} />
         ) : (
           <div className="color-row">
             {PEN_COLORS.map((c) => (
@@ -294,13 +456,15 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
         </div>
         <span className="pdf-hint">
           {readerTool === 'pen'
-            ? 'S펜 압력 필기 · 손가락으로 넘기기 · 펜 버튼 누르고 긋거나 손가락 길게 누르면 선택'
-            : '텍스트 드래그 → 하이라이트'}
+            ? 'S펜 압력 필기 · 손가락으로 넘기기 · 펜 버튼 누르고 긋거나 손가락 길게 누르면 하이라이트'
+            : COARSE_POINTER
+              ? '글자를 잠깐 누른 뒤 그으면 하이라이트 · S펜은 바로 긋기'
+              : '텍스트 드래그 → 하이라이트'}
         </span>
       </div>
 
       <div
-        className="pdf-scroll"
+        className={`pdf-scroll ${COARSE_POINTER ? 'touch-marking' : ''}`}
         ref={containerRef}
         onMouseUp={captureSelection}
         onTouchEnd={() => setTimeout(captureSelection, 50)}
@@ -318,8 +482,11 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
             penEnabled={readerTool === 'pen'}
             penColor={penColor}
             scrollRef={containerRef}
-            onSelectionEnd={captureSelection}
+            onMarkChange={handleMarkChange}
+            onMarkCommit={handleMarkCommit}
             highlights={(highlights ?? []).filter((h) => h.pageIndex === i)}
+            previewRects={preview?.pageIndex === i ? preview.rects : null}
+            previewColor={highlightColor}
             activeHighlightId={activeHighlightId}
             onRendered={() => anchorPort?.invalidate()}
           />
@@ -376,7 +543,10 @@ function PdfPage({
   penEnabled,
   penColor,
   scrollRef,
-  onSelectionEnd,
+  onMarkChange,
+  onMarkCommit,
+  previewRects,
+  previewColor,
   activeHighlightId,
   onRendered,
 }: {
@@ -389,7 +559,10 @@ function PdfPage({
   penEnabled: boolean
   penColor: string
   scrollRef: RefObject<HTMLDivElement | null>
-  onSelectionEnd: () => void
+  onMarkChange: (range: Range | null) => void
+  onMarkCommit: () => void
+  previewRects: Rect[] | null
+  previewColor: HighlightColor
   activeHighlightId: string | null
   onRendered: () => void
 }) {
@@ -455,19 +628,22 @@ function PdfPage({
           h.rects.map((r, i) => (
             <div
               key={`${h.id}-${i}`}
-              className={`hl-rect ${activeHighlightId === h.id ? 'active' : ''}`}
+              className={`hl-rect ${isUnderlineColor(h.color) ? 'underline' : ''} ${
+                activeHighlightId === h.id ? 'active' : ''
+              }`}
               data-highlight={h.id}
-              style={{
-                left: `${r.left * 100}%`,
-                top: `${r.top * 100}%`,
-                width: `${r.width * 100}%`,
-                height: `${r.height * 100}%`,
-                background: HIGHLIGHT_COLORS[h.color],
-              }}
+              style={{ ...rectStyle(r), ...paintStyle(h.color) }}
               title={h.text.slice(0, 120)}
             />
           )),
         )}
+        {(previewRects ?? []).map((r, i) => (
+          <div
+            key={`preview-${i}`}
+            className={`hl-rect preview ${isUnderlineColor(previewColor) ? 'underline' : ''}`}
+            style={{ ...rectStyle(r), ...paintStyle(previewColor) }}
+          />
+        ))}
       </div>
       <div className="text-layer" ref={textRef} />
       <PenOverlay
@@ -477,7 +653,8 @@ function PdfPage({
         enabled={penEnabled}
         color={penColor}
         scrollRef={scrollRef}
-        onSelectionEnd={onSelectionEnd}
+        onMarkChange={onMarkChange}
+        onMarkCommit={onMarkCommit}
       />
     </div>
   )

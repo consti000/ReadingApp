@@ -4,13 +4,12 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/lib/db'
 import { PdfViewer } from '@/components/PdfViewer'
 import { EpubViewer } from '@/components/EpubViewer'
+import { ColorPalette } from '@/components/ColorPalette'
 import { addNodeToWorkspace, deleteHighlight, updateHighlightColor } from '@/lib/actions'
 import type { AnchorPort, AnchorProvider } from '@/lib/highlightAnchors'
 import { useUiStore } from '@/store/uiStore'
-import { HIGHLIGHT_COLORS, type HighlightColor } from '@/types'
+import { HIGHLIGHT_COLORS } from '@/types'
 import './ReadPage.css'
-
-const COLORS = Object.keys(HIGHLIGHT_COLORS) as HighlightColor[]
 
 /** 카드 왼쪽 변에서 선이 붙는 높이 */
 const CARD_ANCHOR_OFFSET = 18
@@ -270,16 +269,11 @@ export function ReadPage() {
                       {h.text}
                     </button>
 
-                    <div className="color-row hl-item-colors">
-                      {COLORS.map((c) => (
-                        <button
-                          key={c}
-                          className={`color-dot ${h.color === c ? 'active' : ''}`}
-                          style={{ background: HIGHLIGHT_COLORS[c] }}
-                          title={`${c} 로 변경`}
-                          onClick={() => void updateHighlightColor(h.id, c)}
-                        />
-                      ))}
+                    <div className="hl-item-colors">
+                      <ColorPalette
+                        value={h.color}
+                        onPick={(c) => void updateHighlightColor(h.id, c)}
+                      />
                     </div>
 
                     <div className="hl-item-actions">

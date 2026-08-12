@@ -1,6 +1,7 @@
 /** ReadLink — Node-View 통합 데이터 모델 */
 
-export type HighlightColor = 'yellow' | 'green' | 'blue' | 'pink' | 'orange'
+/** 'red' 는 칠하지 않고 밑줄만 긋는 범례 */
+export type HighlightColor = 'yellow' | 'green' | 'blue' | 'pink' | 'orange' | 'red'
 
 export type DocumentFormat = 'pdf' | 'epub'
 
@@ -172,9 +173,18 @@ export interface PenStroke {
 }
 
 export const HIGHLIGHT_COLORS: Record<HighlightColor, string> = {
-  yellow: '#f5d76e',
-  green: '#7dcea0',
-  blue: '#85c1e9',
-  pink: '#f5b7b1',
-  orange: '#f0b27a',
+  yellow: '#ffe000',
+  green: '#00d15a',
+  blue: '#2b7fff',
+  pink: '#ff3d8b',
+  orange: '#ff8a00',
+  red: '#ff2233',
+}
+
+/** 원색을 그대로 얹으면 글자를 덮으므로 이만큼만 남기고 투과시킨다 */
+export const HIGHLIGHT_OPACITY = 0.5
+
+/** 칠하지 않고 밑줄만 긋는 범례 — 글자를 전혀 가리지 않는다 */
+export function isUnderlineColor(color: HighlightColor) {
+  return color === 'red'
 }

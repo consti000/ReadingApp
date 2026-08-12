@@ -9,6 +9,7 @@ import {
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/lib/db'
 import { savePenStroke } from '@/lib/actions'
+import { caretAt, rangeBetween, type CaretPoint } from '@/lib/textRange'
 import './PenOverlay.css'
 
 interface Props {
@@ -20,8 +21,10 @@ interface Props {
   color?: string
   /** 필기 중 손가락으로 밀어 넘길 스크롤 영역 */
   scrollRef?: RefObject<HTMLElement | null>
-  /** 텍스트 선택 제스처가 끝나 하이라이트 메뉴를 띄워야 할 때 */
-  onSelectionEnd?: () => void
+  /** 필기 중에도 글자를 그어 하이라이트할 때, 칠해질 범위가 바뀔 때마다 */
+  onMarkChange?: (range: Range | null) => void
+  /** 손을 떼어 그 범위를 확정할 때 */
+  onMarkCommit?: () => void
 }
 
 interface Point {
@@ -30,18 +33,13 @@ interface Point {
   pressure: number
 }
 
-interface Caret {
-  node: Node
-  offset: number
-}
-
 /**
  * 필기 중에는 오버레이가 touch-action: none 이라 브라우저 스크롤이 일어나지 않는다.
  * 그래서 손가락 이동은 여기서 직접 스크롤로 옮기고, 놓은 뒤 관성 스크롤까지 이어준다.
  */
 const TAP_MOVE_PX = 10
-/** 손가락을 이만큼 제자리에서 누르고 있으면 스크롤 대신 텍스트 선택으로 넘어간다 */
-const SELECT_HOLD_MS = 450
+/** 손가락을 이만큼 제자리에서 누르고 있으면 스크롤 대신 하이라이트로 넘어간다 */
+const SELECT_HOLD_MS = 400
 /** Pointer Events 규격: 펜 사이드(barrel) 버튼은 buttons 비트 2 */
 const PEN_BARREL_BUTTON = 2
 const FLICK_DECAY = 0.93
@@ -56,18 +54,6 @@ function capture(el: Element, pointerId: number) {
   }
 }
 
-/** 화면 좌표에 있는 글자 위치 — 선택 범위를 손으로 만들 때 쓴다 */
-function caretAt(x: number, y: number): Caret | null {
-  const doc = document as Document & {
-    caretRangeFromPoint?: (x: number, y: number) => Range | null
-    caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null
-  }
-  const range = doc.caretRangeFromPoint?.(x, y)
-  if (range) return { node: range.startContainer, offset: range.startOffset }
-  const pos = doc.caretPositionFromPoint?.(x, y)
-  return pos ? { node: pos.offsetNode, offset: pos.offset } : null
-}
-
 export function PenOverlay({
   documentId,
   projectId,
@@ -75,7 +61,8 @@ export function PenOverlay({
   enabled,
   color = '#e8c547',
   scrollRef,
-  onSelectionEnd,
+  onMarkChange,
+  onMarkCommit,
 }: Props) {
   const svgRef = useRef<SVGSVGElement>(null)
   const [draft, setDraft] = useState<Point[]>([])
@@ -88,11 +75,13 @@ export function PenOverlay({
     startY: number
     velocity: number
   } | null>(null)
-  const selectRef = useRef<Caret | null>(null)
+  const markFromRef = useRef<CaretPoint | null>(null)
   const holdTimerRef = useRef(0)
   const flickRef = useRef(0)
-  const onSelectionEndRef = useRef(onSelectionEnd)
-  onSelectionEndRef.current = onSelectionEnd
+  const onMarkChangeRef = useRef(onMarkChange)
+  const onMarkCommitRef = useRef(onMarkCommit)
+  onMarkChangeRef.current = onMarkChange
+  onMarkCommitRef.current = onMarkCommit
 
   const strokes = useLiveQuery(
     () =>
@@ -114,43 +103,39 @@ export function PenOverlay({
     flickRef.current = 0
   }, [])
 
-  const selectMove = useCallback((e: PointerEvent) => {
-    const anchor = selectRef.current
-    if (!anchor) return
-    const focus = caretAt(e.clientX, e.clientY)
-    if (!focus) return
-    window
-      .getSelection()
-      ?.setBaseAndExtent(anchor.node, anchor.offset, focus.node, focus.offset)
+  const markMove = useCallback((e: PointerEvent) => {
+    const from = markFromRef.current
+    if (!from) return
+    const to = caretAt(document, e.clientX, e.clientY)
+    onMarkChangeRef.current?.(to ? rangeBetween(document, from, to) : null)
   }, [])
 
-  const selectEnd = useCallback(() => {
-    window.removeEventListener('pointermove', selectMove)
-    window.removeEventListener('pointerup', selectEnd)
-    window.removeEventListener('pointercancel', selectEnd)
-    selectRef.current = null
+  const markEnd = useCallback(() => {
+    window.removeEventListener('pointermove', markMove)
+    window.removeEventListener('pointerup', markEnd)
+    window.removeEventListener('pointercancel', markEnd)
+    markFromRef.current = null
     // CSS 가 정하는 값으로 되돌린다 (필기 모드면 auto)
     if (svgRef.current) svgRef.current.style.pointerEvents = ''
-    onSelectionEndRef.current?.()
-  }, [selectMove])
+    onMarkCommitRef.current?.()
+  }, [markMove])
 
   /*
-   * 선택 제스처는 오버레이 위에서 시작하지만, 글자 위치를 알아내려면
+   * 칠하기는 오버레이 위에서 시작하지만, 글자 위치를 알아내려면
    * 히트 테스트가 본문 텍스트 레이어까지 닿아야 해서 오버레이를 잠시 비켜준다.
-   * 제스처가 시작될 때 touch-action 은 이미 결정됐으므로 스크롤은 여전히 안 일어난다.
+   * 제스처가 시작될 때 touch-action 은 이미 결정됐으므로 화면은 여전히 흐르지 않는다.
    */
-  const selectBegin = useCallback(
+  const markBegin = useCallback(
     (x: number, y: number) => {
       const svg = svgRef.current
       if (!svg) return
       svg.style.pointerEvents = 'none'
-      window.getSelection()?.removeAllRanges()
-      selectRef.current = caretAt(x, y)
-      window.addEventListener('pointermove', selectMove)
-      window.addEventListener('pointerup', selectEnd)
-      window.addEventListener('pointercancel', selectEnd)
+      markFromRef.current = caretAt(document, x, y)
+      window.addEventListener('pointermove', markMove)
+      window.addEventListener('pointerup', markEnd)
+      window.addEventListener('pointercancel', markEnd)
     },
-    [selectEnd, selectMove],
+    [markEnd, markMove],
   )
 
   useEffect(() => {
@@ -166,9 +151,9 @@ export function PenOverlay({
     () => () => {
       clearHold()
       stopFlick()
-      if (selectRef.current) selectEnd()
+      if (markFromRef.current) markEnd()
     },
-    [clearHold, stopFlick, selectEnd],
+    [clearHold, stopFlick, markEnd],
   )
 
   const toNorm = (e: ReactPointerEvent): Point => {
@@ -209,7 +194,7 @@ export function PenOverlay({
     // 펜 사이드 버튼을 누른 채 그으면 필기 대신 텍스트를 고른다
     if (e.pointerType === 'pen' && (e.buttons & PEN_BARREL_BUTTON) !== 0) {
       e.preventDefault()
-      selectBegin(e.clientX, e.clientY)
+      markBegin(e.clientX, e.clientY)
       return
     }
 
@@ -237,7 +222,7 @@ export function PenOverlay({
         } catch {
           // 이미 놓친 포인터
         }
-        selectBegin(pan.x, pan.y)
+        markBegin(pan.x, pan.y)
       }, SELECT_HOLD_MS)
       return
     }

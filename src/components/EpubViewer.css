@@ -85,6 +85,40 @@
   pointer-events: none;
 }
 
+/* 밑줄 범례 — 테두리 사각형은 지우고, 검은 실선은 범례 색으로 되돌린다 */
+.epub-frame .readlink-ul {
+  pointer-events: none;
+}
+
+.epub-frame .readlink-ul rect {
+  fill: none;
+  stroke: none;
+}
+
+/* epubjs 기본값(검은 선, 30% 불투명)을 범례 색으로 덮는다 */
+.epub-frame .readlink-ul line {
+  stroke: currentColor;
+  stroke-opacity: 1;
+  stroke-width: 2px;
+}
+
+/* 손끝을 따라 칠해질 자리 — 본문은 iframe 안이라 화면 좌표로 얹는다 */
+.epub-mark-preview {
+  position: fixed;
+  z-index: 40;
+  pointer-events: none;
+  opacity: 0.5;
+  mix-blend-mode: multiply;
+  border-radius: 1px;
+}
+
+.epub-mark-preview.underline {
+  mix-blend-mode: normal;
+  opacity: 0.9;
+  border-bottom: 2px solid;
+  border-radius: 0;
+}
+
 .epub-status {
   position: absolute;
   inset: 52px 0 0;

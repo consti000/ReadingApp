@@ -58,16 +58,39 @@
   z-index: 1;
 }
 
+/* 원색을 절반만 남겨 얹으므로 글자가 그대로 읽힌다 */
 .hl-rect {
   position: absolute;
-  opacity: 0.4;
+  opacity: 0.5;
   mix-blend-mode: multiply;
   border-radius: 1px;
   transition: opacity 0.12s ease;
 }
 
 .hl-rect.active {
-  opacity: 0.75;
+  opacity: 0.8;
+}
+
+/* 밑줄 범례는 글자를 덮지 않고 아래에만 선을 남긴다 */
+.hl-rect.underline {
+  mix-blend-mode: normal;
+  border-bottom: 2px solid;
+  border-radius: 0;
+  opacity: 0.9;
+}
+
+.hl-rect.underline.active {
+  opacity: 1;
+}
+
+/* 손끝을 따라 칠해질 자리 */
+.hl-rect.preview {
+  opacity: 0.6;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
+}
+
+.hl-rect.underline.preview {
+  box-shadow: none;
 }
 
 .text-layer {
@@ -87,6 +110,16 @@
   color: transparent;
   transform-origin: 0% 0%;
   cursor: text;
+}
+
+/*
+ * 태블릿에서는 직접 칠하는 제스처를 쓴다.
+ * 브라우저 선택을 열어 두면 OS 선택 핸들과 복사·공유 메뉴가 함께 떠 방해가 된다.
+ */
+.pdf-scroll.touch-marking .text-layer {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .pdf-status {

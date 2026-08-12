@@ -12,7 +12,15 @@ import {
 import { useUiStore } from '@/store/uiStore'
 import { HighlightEditMenu } from '@/components/HighlightEditMenu'
 import type { AnchorPort, HighlightAnchor } from '@/lib/highlightAnchors'
-import { HIGHLIGHT_COLORS, type Highlight, type HighlightColor } from '@/types'
+import { caretAt, rangeBetween, type CaretPoint } from '@/lib/textRange'
+import { ColorPalette } from '@/components/ColorPalette'
+import {
+  HIGHLIGHT_COLORS,
+  HIGHLIGHT_OPACITY,
+  isUnderlineColor,
+  type Highlight,
+  type HighlightColor,
+} from '@/types'
 import './EpubViewer.css'
 
 interface Props {
@@ -45,11 +53,19 @@ interface EpubLocation {
 }
 
 const HL_CLASS = 'readlink-hl'
+const UL_CLASS = 'readlink-ul'
 
 /** 탭/스와이프 판정 기준 — 드래그(텍스트 선택)와 구분하기 위한 값 */
 const TAP_MAX_MOVE_PX = 10
 const TAP_MAX_MS = 400
 const SWIPE_MIN_PX = 60
+
+/** 손가락이 주 입력인 기기 — 브라우저 선택 대신 직접 칠한다 */
+const COARSE_POINTER =
+  typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches === true
+
+/** 제자리에서 이만큼 누르고 있으면 페이지 넘김이 아니라 하이라이트로 넘어간다 */
+const HOLD_TO_MARK_MS = 400
 
 /** 좌우 가장자리 탭 영역 폭 */
 function edgeZoneWidth(viewportWidth: number): number {
@@ -102,6 +118,10 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
   const [selMenu, setSelMenu] = useState<{ x: number; y: number } | null>(null)
   const [editing, setEditing] = useState<{ id: string; x: number; y: number } | null>(null)
   const [fontScale, setFontScale] = useState(100)
+  /** 손끝을 따라 칠해질 자리 (뷰포트 좌표) */
+  const [markPreview, setMarkPreview] = useState<
+    { left: number; top: number; width: number; height: number }[] | null
+  >(null)
 
   const highlightColor = useUiStore((s) => s.highlightColor)
   const setHighlightColor = useUiStore((s) => s.setHighlightColor)
@@ -117,6 +137,15 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
   selectionRef.current = selection
   editingRef.current = editing
   anchorPortRef.current = anchorPort
+
+  /*
+   * 본문 제스처 처리기는 책을 다시 그리지 않으려면 그대로 유지돼야 해서
+   * 자주 바뀌는 값은 ref 로 넘겨 본다.
+   */
+  const highlightColorRef = useRef(highlightColor)
+  const workspaceIdRef = useRef(workspaceId)
+  highlightColorRef.current = highlightColor
+  workspaceIdRef.current = workspaceId
 
   /*
    * epubjs 의 displayed.total 은 마지막 섹션에서 한 페이지 더 많게 나오는 경우가 있어
@@ -188,10 +217,47 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
     [getContentsList],
   )
 
+  /** 그은 구간을 CFI 로 바꿔 하이라이트로 남긴다 */
+  const commitMark = useCallback(
+    async (doc: Document, range: Range) => {
+      const contents = getContentsList().find((c) => c.document === doc)
+      const text = range.toString().trim()
+      if (!contents || !text) return
+
+      let cfi: string
+      try {
+        cfi = contents.cfiFromRange(range)
+      } catch {
+        return
+      }
+
+      const section = bookRef.current?.spine?.get(cfi)
+      const { nodeId } = await createHighlight({
+        documentId,
+        projectId,
+        text,
+        color: highlightColorRef.current,
+        rects: [],
+        pageIndex: typeof section?.index === 'number' ? section.index : 0,
+        cfi,
+      })
+      const workspace = workspaceIdRef.current
+      if (workspace) {
+        await addNodeToWorkspace(
+          workspace,
+          nodeId,
+          60 + Math.random() * 120,
+          60 + Math.random() * 80,
+        )
+      }
+    },
+    [documentId, projectId, getContentsList],
+  )
+
   /*
-   * 페이지 넘김 제스처를 본문 문서 안에서 직접 처리한다.
-   * 본문 위에 겹친 버튼으로 처리하면 그 영역에서 드래그를 시작할 수 없어
-   * 가장자리 근처의 텍스트를 하이라이트할 수 없다.
+   * 페이지 넘김과 하이라이트를 본문 문서 안에서 직접 처리한다.
+   * 본문 위에 겹친 버튼으로 처리하면 그 영역에서 드래그를 시작할 수 없고,
+   * 브라우저 선택에 기대면 태블릿에서 OS 선택 메뉴가 함께 떠 방해가 된다.
    */
   const bindContentGestures = useCallback(
     (doc: Document) => {
@@ -201,22 +267,96 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
       })
 
       let from: { x: number; y: number; at: number; pointerId: number } | null = null
+      let hold = 0
+      let markFrom: CaretPoint | null = null
+      let markRange: Range | null = null
+
+      const clearHold = () => {
+        if (hold) window.clearTimeout(hold)
+        hold = 0
+      }
+
+      const endMark = () => {
+        clearHold()
+        markFrom = null
+        markRange = null
+        setMarkPreview(null)
+      }
+
+      const beginMark = (x: number, y: number) => {
+        markFrom = caretAt(doc, x, y)
+        if (!markFrom) endMark()
+      }
+
+      const showPreview = (range: Range | null) => {
+        const frame = doc.defaultView?.frameElement as HTMLElement | null
+        if (!range || !frame) return setMarkPreview(null)
+        const fr = frame.getBoundingClientRect()
+        setMarkPreview(
+          Array.from(range.getClientRects())
+            .filter((r) => r.width > 0.5 && r.height > 0.5)
+            .map((r) => ({
+              left: fr.left + r.left,
+              top: fr.top + r.top,
+              width: r.width,
+              height: r.height,
+            })),
+        )
+      }
 
       doc.addEventListener('pointerdown', (e: PointerEvent) => {
+        endMark()
         from =
           e.isPrimary && e.button === 0
             ? { x: e.clientX, y: e.clientY, at: performance.now(), pointerId: e.pointerId }
             : null
+        if (!from) return
+        if (e.pointerType === 'pen') beginMark(e.clientX, e.clientY)
+        else if (e.pointerType === 'touch')
+          hold = window.setTimeout(() => {
+            hold = 0
+            if (from) beginMark(from.x, from.y)
+          }, HOLD_TO_MARK_MS)
       })
+
+      doc.addEventListener('pointermove', (e: PointerEvent) => {
+        if (!from || e.pointerId !== from.pointerId) return
+        if (!markFrom) {
+          // 누르고 있는 사이에 움직였다면 페이지를 넘기려는 손짓이다
+          if (Math.hypot(e.clientX - from.x, e.clientY - from.y) > TAP_MAX_MOVE_PX) clearHold()
+          return
+        }
+        const to = caretAt(doc, e.clientX, e.clientY)
+        markRange = to ? rangeBetween(doc, markFrom, to) : null
+        showPreview(markRange)
+      })
+
+      // 칠하기가 시작된 뒤에는 본문이 따라 흐르지 않아야 한다
+      doc.addEventListener(
+        'touchmove',
+        (e: TouchEvent) => {
+          if (markFrom) e.preventDefault()
+        },
+        { passive: false },
+      )
 
       doc.addEventListener('pointercancel', () => {
         from = null
+        endMark()
       })
 
       doc.addEventListener('pointerup', (e: PointerEvent) => {
         const origin = from
         from = null
+        const range = markFrom ? markRange : null
+        endMark()
         if (!origin || e.pointerId !== origin.pointerId) return
+
+        // 글자를 그어 칠했으면 페이지는 그대로 둔다
+        if (range) {
+          void commitMark(doc, range)
+          return
+        }
 
         // 본문 내부 링크는 epubjs 가 처리하도록 둔다
         if ((e.target as Element | null)?.closest?.('a')) return
@@ -273,7 +413,7 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
         else if (visibleX >= mountRect.width - zone) void goNext()
       })
     },
-    [goNext, goPrev, hitTestHighlight],
+    [goNext, goPrev, hitTestHighlight, commitMark],
   )
 
   /** DB 상태와 rendition 주석을 동기화 (추가/삭제/색상 변경 반영) */
@@ -289,7 +429,7 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
     for (const [cfi, color] of [...appliedRef.current]) {
       if (wanted.get(cfi) === color) continue
       try {
-        rendition.annotations.remove(cfi, 'highlight')
+        rendition.annotations.remove(cfi, isUnderlineColor(color) ? 'underline' : 'highlight')
       } catch {
         // 이미 사라진 주석
       }
@@ -299,10 +439,20 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
     for (const h of highlightsRef.current) {
       if (!h.cfi || appliedRef.current.has(h.cfi)) continue
       try {
-        rendition.annotations.highlight(h.cfi, { id: h.id }, undefined, HL_CLASS, {
-          fill: HIGHLIGHT_COLORS[h.color],
-          'fill-opacity': '0.4',
-        })
+        if (isUnderlineColor(h.color)) {
+          /*
+           * marks-pane 은 밑줄을 테두리 사각형 + 검은 실선으로 그린다.
+           * stroke 를 직접 주면 사각형까지 물들기 때문에 색만 넘기고 선은 CSS 에서 잡는다.
+           */
+          rendition.annotations.underline(h.cfi, { id: h.id }, undefined, UL_CLASS, {
+            color: HIGHLIGHT_COLORS[h.color],
+          })
+        } else {
+          rendition.annotations.highlight(h.cfi, { id: h.id }, undefined, HL_CLASS, {
+            fill: HIGHLIGHT_COLORS[h.color],
+            'fill-opacity': String(HIGHLIGHT_OPACITY),
+          })
+        }
         appliedRef.current.set(h.cfi, h.color)
       } catch {
         // 잘못된 CFI는 건너뜀
@@ -508,6 +658,14 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
             color: '#1a1a1a !important',
             background: '#f7f4ef !important',
             padding: '1.25rem 1.5rem !important',
+            // 태블릿에서는 직접 칠하므로 OS 선택 핸들·메뉴가 끼어들지 않게 한다
+            ...(COARSE_POINTER
+              ? {
+                  '-webkit-user-select': 'none !important',
+                  'user-select': 'none !important',
+                  '-webkit-touch-callout': 'none !important',
+                }
+              : {}),
           },
           a: { color: '#6b5428 !important' },
           'img, svg, video': { 'max-width': '100% !important', height: 'auto !important' },
@@ -708,17 +866,7 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
   return (
     <div className="epub-viewer">
       <div className="epub-toolbar">
-        <div className="color-row">
-          {(Object.keys(HIGHLIGHT_COLORS) as HighlightColor[]).map((c) => (
-            <button
-              key={c}
-              className={`color-dot ${highlightColor === c ? 'active' : ''}`}
-              style={{ background: HIGHLIGHT_COLORS[c] }}
-              title={c}
-              onClick={() => setHighlightColor(c)}
-            />
-          ))}
-        </div>
+        <ColorPalette value={highlightColor} onPick={setHighlightColor} />
         <div className="zoom-row">
           <button
             className="btn btn-sm"
@@ -771,7 +919,11 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
             ))}
           </select>
         )}
-        <span className="epub-hint">←→ / 스와이프 / 좌우 가장자리 탭 · 드래그는 선택</span>
+        <span className="epub-hint">
+          {COARSE_POINTER
+            ? '스와이프·가장자리 탭으로 넘기기 · 글자를 잠깐 누른 뒤 그으면 하이라이트'
+            : '←→ / 스와이프 / 좌우 가장자리 탭 · 드래그는 선택'}
+        </span>
       </div>
 
       <div className="epub-progress" aria-hidden>
@@ -784,6 +936,22 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
       <div className="epub-stage">
         <div className="epub-frame" ref={viewerRef} />
       </div>
+
+      {markPreview?.map((r, i) => (
+        <div
+          key={i}
+          className={`epub-mark-preview ${isUnderlineColor(highlightColor) ? 'underline' : ''}`}
+          style={{
+            left: r.left,
+            top: r.top,
+            width: r.width,
+            height: r.height,
+            ...(isUnderlineColor(highlightColor)
+              ? { borderBottomColor: HIGHLIGHT_COLORS[highlightColor] }
+              : { background: HIGHLIGHT_COLORS[highlightColor] }),
+          }}
+        />
+      ))}
 
       {selMenu && selection && (
         <div className="sel-menu" style={{ left: selMenu.x, top: selMenu.y }}>
