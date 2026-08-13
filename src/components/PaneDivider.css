@@ -1,0 +1,65 @@
+.pane-divider {
+  position: relative;
+  z-index: 6;
+  background: var(--border);
+  touch-action: none;
+  transition: background 0.12s ease;
+}
+
+.pane-divider.vertical {
+  width: 5px;
+  cursor: col-resize;
+}
+
+.pane-divider.horizontal {
+  height: 5px;
+  cursor: row-resize;
+}
+
+/* 손가락·펜으로도 잡히도록 보이는 선보다 넓게 받는다 */
+.pane-divider::before {
+  content: '';
+  position: absolute;
+}
+
+.pane-divider.vertical::before {
+  inset: 0 -5px;
+}
+
+.pane-divider.horizontal::before {
+  inset: -5px 0;
+}
+
+/* 가운데 손잡이 자국 */
+.pane-divider::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  border-radius: 999px;
+  background: var(--border-strong);
+}
+
+.pane-divider.vertical::after {
+  width: 3px;
+  height: 34px;
+}
+
+.pane-divider.horizontal::after {
+  width: 34px;
+  height: 3px;
+}
+
+.pane-divider:hover,
+.pane-divider.dragging,
+.pane-divider:focus-visible {
+  background: var(--accent);
+  outline: none;
+}
+
+.pane-divider:hover::after,
+.pane-divider.dragging::after,
+.pane-divider:focus-visible::after {
+  background: var(--bg);
+}

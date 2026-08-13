@@ -20,6 +20,7 @@ import {
   deleteHighlight,
 } from '@/lib/actions'
 import { isSameSpot, rectsArea, rectsOverlapArea } from '@/lib/highlightOverlap'
+import { usePaneSize } from '@/lib/panes'
 import { db } from '@/lib/db'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { useUiStore } from '@/store/uiStore'
@@ -166,6 +167,9 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
   /** 배율 1 기준 첫 장 크기 — 아직 그리지 않은 페이지의 자리를 잡는 데 쓴다 */
   const [pageBox, setPageBox] = useState<{ w: number; h: number } | null>(null)
   const [scale, setScale] = useState(1.15)
+  /** 켜 두면 문서 칸 폭에 배율을 맞춘다 (칸을 좁히거나 넓히면 따라간다) */
+  const [fitFlag, , setFitFlag] = usePaneSize('pdf-fit-width', 0)
+  const fitWidth = fitFlag === 1
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [selection, setSelection] = useState<SelectionPayload | null>(null)
@@ -277,6 +281,44 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
     [pdf, alignPage],
   )
 
+  /** 지금 칸에 한 장이 꼭 들어가는 배율 */
+  const widthScale = useCallback((): number | null => {
+    const scroll = containerRef.current
+    if (!scroll || !pageBox || pageBox.w < 1) return null
+    const pad = getComputedStyle(scroll)
+    const room =
+      scroll.clientWidth -
+      parseFloat(pad.paddingLeft || '0') -
+      parseFloat(pad.paddingRight || '0') -
+      // 그림 크기가 반올림되며 1~2px 넘치면 가로 스크롤이 생긴다
+      2
+    if (room < 80) return null
+    // 올림하면 칸을 넘기므로 내림한다
+    return Math.floor(Math.min(Math.max(room / pageBox.w, 0.6), 2.5) * 100) / 100
+  }, [pageBox])
+
+  // 칸 크기가 바뀔 때마다 다시 맞춘다
+  useEffect(() => {
+    const scroll = containerRef.current
+    if (!viewerReady || !fitWidth || !scroll) return
+    const apply = () => {
+      const next = widthScale()
+      if (next !== null) setScale((s) => (Math.abs(s - next) < 0.005 ? s : next))
+    }
+    apply()
+    const observer = new ResizeObserver(apply)
+    observer.observe(scroll)
+    return () => observer.disconnect()
+  }, [viewerReady, fitWidth, widthScale])
+
+  const zoomBy = useCallback(
+    (step: number) => {
+      setFitFlag(0)
+      setScale((s) => Math.round(Math.min(Math.max(s + step, 0.6), 2.5) * 100) / 100)
+    },
+    [setFitFlag],
+  )
+
   const scheduleDrawRange = useCallback(() => {
     if (rangeRafRef.current) return
     rangeRafRef.current = requestAnimationFrame(() => {
@@ -289,12 +331,19 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
     if (!viewerReady) return
     scheduleDrawRange()
     window.addEventListener('resize', scheduleDrawRange)
+    // 분할선을 끌면 창 크기는 그대로고 이 칸만 바뀌므로 칸을 직접 지켜본다
+    const observer = new ResizeObserver(() => {
+      scheduleDrawRange()
+      anchorPort?.invalidate()
+    })
+    if (containerRef.current) observer.observe(containerRef.current)
     return () => {
       window.removeEventListener('resize', scheduleDrawRange)
+      observer.disconnect()
       if (rangeRafRef.current) cancelAnimationFrame(rangeRafRef.current)
       rangeRafRef.current = 0
     }
-  }, [viewerReady, scale, scheduleDrawRange])
+  }, [viewerReady, scale, scheduleDrawRange, anchorPort])
 
   useEffect(() => {
     let cancelled = false
@@ -666,12 +715,19 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
           />
         )}
         <div className="zoom-row">
-          <button className="btn btn-sm" onClick={() => setScale((s) => Math.max(0.6, s - 0.1))}>
+          <button className="btn btn-sm" onClick={() => zoomBy(-0.1)}>
             −
           </button>
           <span>{Math.round(scale * 100)}%</span>
-          <button className="btn btn-sm" onClick={() => setScale((s) => Math.min(2.5, s + 0.1))}>
+          <button className="btn btn-sm" onClick={() => zoomBy(0.1)}>
             +
+          </button>
+          <button
+            className={`btn btn-sm ${fitWidth ? 'btn-primary' : ''}`}
+            title="문서 칸 폭에 맞춰 배율을 따라가게 합니다"
+            onClick={() => setFitFlag(fitWidth ? 0 : 1)}
+          >
+            폭 맞춤
           </button>
         </div>
         {readerTool === 'pen' && (

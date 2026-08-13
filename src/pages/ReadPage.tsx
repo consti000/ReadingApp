@@ -5,14 +5,22 @@ import { db } from '@/lib/db'
 import { PdfViewer } from '@/components/PdfViewer'
 import { EpubViewer } from '@/components/EpubViewer'
 import { ColorPalette } from '@/components/ColorPalette'
+import { PaneDivider } from '@/components/PaneDivider'
 import { addNodeToWorkspace, deleteHighlight, updateHighlightColor } from '@/lib/actions'
 import type { AnchorPort, AnchorProvider } from '@/lib/highlightAnchors'
+import { clamp, useMediaQuery, usePaneSize } from '@/lib/panes'
 import { useUiStore } from '@/store/uiStore'
 import { HIGHLIGHT_COLORS } from '@/types'
 import './ReadPage.css'
 
 /** 카드 왼쪽 변에서 선이 붙는 높이 */
 const CARD_ANCHOR_OFFSET = 18
+
+const SIDEBAR_DEFAULT = 280
+const SIDEBAR_MIN = 200
+const SIDEBAR_MAX = 720
+/** 사이드바를 아무리 넓혀도 본문에 이만큼은 남긴다 */
+const DOC_MIN = 360
 
 /** 좌표가 이만큼 연속으로 같으면 레이아웃이 정착한 것으로 본다 */
 const SETTLE_FRAMES = 4
@@ -40,6 +48,14 @@ export function ReadPage() {
   const settleRef = useRef(0)
   const linesRef = useRef<ConnectorLine[]>([])
   const [lines, setLines] = useState<ConnectorLine[]>([])
+
+  const narrow = useMediaQuery('(max-width: 800px)')
+  const [sidebarWidth, setSidebarWidth, commitSidebarWidth] = usePaneSize(
+    'read-sidebar',
+    SIDEBAR_DEFAULT,
+  )
+  const widthRef = useRef(sidebarWidth)
+  const dragBaseRef = useRef(sidebarWidth)
 
   const activeHighlightId = useUiStore((s) => s.activeHighlightId)
   const setActiveHighlightId = useUiStore((s) => s.setActiveHighlightId)
@@ -165,6 +181,31 @@ export function ReadPage() {
     schedule()
   }, [highlights, schedule])
 
+  /** 창 폭에 따라 사이드바가 넓힐 수 있는 한계가 달라진다 */
+  const widthLimit = useCallback(() => {
+    const room = bodyRef.current?.clientWidth ?? 0
+    if (room < 1) return SIDEBAR_MAX
+    return clamp(room - DOC_MIN, SIDEBAR_MIN, SIDEBAR_MAX)
+  }, [])
+
+  const applyWidth = useCallback(
+    (value: number) => {
+      const next = clamp(value, SIDEBAR_MIN, widthLimit())
+      widthRef.current = next
+      setSidebarWidth(next)
+      // 칸 크기가 바뀌면 카드 위치도 옮겨지므로 연결선을 다시 잰다
+      schedule()
+    },
+    [schedule, setSidebarWidth, widthLimit],
+  )
+
+  // 창을 줄였을 때 사이드바가 본문을 다 먹지 않도록 되돌린다
+  useEffect(() => {
+    const onResize = () => applyWidth(widthRef.current)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [applyWidth])
+
   if (!projectId || !documentId) return null
   if (doc === undefined) return <div className="empty-state">불러오는 중…</div>
   if (!doc) return <div className="empty-state">문서를 찾을 수 없습니다</div>
@@ -210,7 +251,11 @@ export function ReadPage() {
         </div>
       </header>
 
-      <div className="read-body" ref={bodyRef}>
+      <div
+        className="read-body"
+        ref={bodyRef}
+        style={narrow ? undefined : { gridTemplateColumns: `1fr auto ${sidebarWidth}px` }}
+      >
         <div className="read-pdf">
           {isEpub ? (
             <EpubViewer
@@ -243,6 +288,22 @@ export function ReadPage() {
             )
           })}
         </svg>
+
+        {!narrow && (
+          <PaneDivider
+            orientation="vertical"
+            label="하이라이트 칸 너비"
+            onStart={() => {
+              dragBaseRef.current = widthRef.current
+            }}
+            onMove={(delta) => applyWidth(dragBaseRef.current - delta)}
+            onEnd={() => commitSidebarWidth(widthRef.current)}
+            onReset={() => {
+              applyWidth(SIDEBAR_DEFAULT)
+              commitSidebarWidth(widthRef.current)
+            }}
+          />
+        )}
 
         <aside className="read-sidebar" ref={sidebarRef}>
           <h3>하이라이트</h3>
