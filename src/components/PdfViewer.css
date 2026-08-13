@@ -24,6 +24,20 @@
   color: var(--text-muted);
 }
 
+.pdf-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.pdf-loc {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  min-width: 4.5rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
 .pdf-hint {
   margin-left: auto;
   font-size: 0.8rem;

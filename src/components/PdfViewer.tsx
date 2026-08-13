@@ -153,6 +153,9 @@ const COARSE_POINTER =
  */
 const KEEP_DRAWN_MARGIN_PX = 1200
 
+/** 페이지로 옮겼을 때 위쪽에 남겨 두는 여백 */
+const PAGE_TOP_GAP_PX = 8
+
 /** 이만큼 제자리에서 누르고 있으면 넘기기가 아니라 색칠로 넘어간다 */
 const HOLD_TO_MARK_MS = 380
 const HOLD_MOVE_TOLERANCE_PX = 12
@@ -203,6 +206,8 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
    * 이분 탐색으로 찾는다. 300 쪽짜리라도 스크롤 한 번에 열 번 남짓만 재면 된다.
    */
   const [drawRange, setDrawRange] = useState({ from: 0, to: 1 })
+  /** 지금 읽고 있는 페이지 (0부터) — 화면 가운데에 놓인 장 */
+  const [pageNow, setPageNow] = useState(0)
   const pageHosts = useRef(new Map<number, HTMLDivElement>())
   const rangeRafRef = useRef(0)
 
@@ -241,7 +246,36 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
     const to = Math.max(from, Math.min(last, after - 1))
 
     setDrawRange((prev) => (prev.from === from && prev.to === to ? prev : { from, to }))
+    // 화면 가운데를 지나는 장을 지금 읽는 페이지로 삼는다
+    setPageNow(search((i) => (rectOf(i)?.bottom ?? Infinity) >= (view.top + view.bottom) / 2))
   }, [pdf])
+
+  /** 그 페이지의 첫머리에 맞춘다 (창 전체가 아니라 본문만 움직인다) */
+  const alignPage = useCallback((index: number) => {
+    const scroll = containerRef.current
+    const el = pageHosts.current.get(index)
+    if (!scroll || !el) return
+    const offset = el.getBoundingClientRect().top - scroll.getBoundingClientRect().top
+    // 한 장씩 건너뛰는 이동이라 곧바로 옮긴다 (부드러운 이동은 중간 페이지를 괜히 그린다)
+    scroll.scrollTop = scroll.scrollTop + offset - PAGE_TOP_GAP_PX
+  }, [])
+
+  /**
+   * 아직 그리지 않은 페이지는 첫 장 크기로 자리만 잡아 두므로, 크기가 다른 장이 있으면
+   * 옮긴 뒤 실제 크기가 들어올 때 화면이 조금 밀린다. 그 장을 그린 뒤 한 번 더 맞춘다.
+   */
+  const jumpTargetRef = useRef<number | null>(null)
+
+  const goToPage = useCallback(
+    (index: number) => {
+      const last = (pdf?.numPages ?? 0) - 1
+      const target = Math.max(0, Math.min(last, index))
+      jumpTargetRef.current = target
+      setPageNow(target)
+      alignPage(target)
+    },
+    [pdf, alignPage],
+  )
 
   const scheduleDrawRange = useCallback(() => {
     if (rangeRafRef.current) return
@@ -645,6 +679,25 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
             필기 되돌리기
           </button>
         )}
+        <div className="pdf-nav">
+          <button
+            className="btn btn-sm"
+            disabled={pageNow <= 0}
+            onClick={() => goToPage(pageNow - 1)}
+          >
+            ← 이전 페이지
+          </button>
+          <span className="pdf-loc">
+            {pageNow + 1} / {pdf.numPages}
+          </span>
+          <button
+            className="btn btn-sm"
+            disabled={pageNow >= pdf.numPages - 1}
+            onClick={() => goToPage(pageNow + 1)}
+          >
+            다음 페이지 →
+          </button>
+        </div>
         <span className="pdf-hint">
           {readerTool === 'pen'
             ? 'S펜 압력 필기 · 손가락으로 넘기기 · 펜 버튼 누르고 긋거나 손가락 길게 누르면 하이라이트'
@@ -687,6 +740,11 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
             activeHighlightId={activeHighlightId}
             onRendered={() => {
               anchorPort?.invalidate()
+              // 옮겨 온 장이 그려졌으면 실제 크기에 맞춰 첫머리를 한 번 더 잡는다
+              if (jumpTargetRef.current === i) {
+                jumpTargetRef.current = null
+                alignPage(i)
+              }
               // 실제 크기가 자리표시보다 크거나 작았다면 그릴 구간도 달라진다
               scheduleDrawRange()
             }}
