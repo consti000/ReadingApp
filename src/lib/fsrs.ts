@@ -82,7 +82,8 @@ export async function syncNodesToFlashcards(projectId: string): Promise<number> 
         projectId,
         nodeId: node.id,
         front: node.text.slice(0, 200),
-        back: node.memo?.trim() || node.text,
+        // 정답은 사람이 적는 자리다. 메모가 있으면 그것으로 시작하고, 없으면 비워 둔다
+        back: node.memo?.trim() ?? '',
         createdAt: now,
       },
       empty,
@@ -92,6 +93,33 @@ export async function syncNodesToFlashcards(projectId: string): Promise<number> 
   }
   await db.flashcardDecks.update(deckId, { updatedAt: now })
   return added
+}
+
+/** 정답을 적거나 고친다 */
+export async function setFlashcardAnswer(cardId: string, back: string): Promise<void> {
+  await db.flashcards.update(cardId, { back: back.trim(), updatedAt: Date.now() })
+}
+
+/** 정답 자리에 문제와 같은 글이 들어 있는지 */
+function echoesQuestion(front: string, back: string): boolean {
+  const question = front.trim()
+  const answer = back.trim()
+  if (!answer) return false
+  // 예전 카드는 앞면을 200자에서 자르고 뒷면에는 발췌문 전체를 넣었다
+  return answer === question || (question.length === 200 && answer.startsWith(question))
+}
+
+/**
+ * 문제와 정답이 똑같이 적힌 카드를 비워 정답을 적을 수 있게 한다.
+ * 메모 없이 만든 카드가 발췌문을 양쪽에 넣던 때에 생긴 것들이다.
+ */
+export async function clearEchoedAnswers(projectId: string): Promise<number> {
+  const cards = await db.flashcards.where('projectId').equals(projectId).toArray()
+  const echoed = cards.filter((c) => echoesQuestion(c.front, c.back))
+  if (!echoed.length) return 0
+  const now = Date.now()
+  await db.flashcards.bulkPut(echoed.map((c) => ({ ...c, back: '', updatedAt: now })))
+  return echoed.length
 }
 
 export async function getDueFlashcards(projectId: string, now = Date.now()): Promise<Flashcard[]> {
@@ -118,7 +146,8 @@ export async function getReviewStats(projectId: string) {
   const learning = cards.filter((c) => c.state === State.Learning || c.state === State.Relearning).length
   const review = cards.filter((c) => c.state === State.Review).length
   const newCount = cards.filter((c) => c.state === State.New).length
-  return { total: cards.length, due, learning, review, newCount }
+  const noAnswer = cards.filter((c) => !c.back.trim()).length
+  return { total: cards.length, due, learning, review, newCount, noAnswer }
 }
 
 export async function exportAnkiTsv(projectId: string): Promise<Blob> {

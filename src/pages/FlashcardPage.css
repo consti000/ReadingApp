@@ -66,6 +66,33 @@
   color: var(--text-muted);
 }
 
+.fc-back-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.fc-answer {
+  margin-top: 0.4rem;
+  font-size: 1.05rem;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.fc-answer-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.fc-answer-hint {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
 .fc-reveal {
   width: 100%;
   margin-top: 0.5rem;
