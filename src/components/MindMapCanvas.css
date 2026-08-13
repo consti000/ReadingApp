@@ -8,6 +8,9 @@
 
 .mm-hint {
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
   padding: 0.4rem 0.85rem;
   font-size: 0.8rem;
   color: var(--text-muted);
@@ -15,9 +18,16 @@
   background: rgba(18, 24, 31, 0.85);
 }
 
+.mm-hint > button {
+  flex-shrink: 0;
+}
+
 .mm-viewport {
   flex: 1;
   min-height: 0;
+  /* 캔버스(.mm-world)가 이 안에서 잘리도록 기준을 잡는다 — 없으면 5000px 판이
+     화면 밖까지 뻗어 페이지가 통째로 옆으로 밀린다 */
+  position: relative;
   overflow: hidden;
   cursor: grab;
   touch-action: none;
@@ -36,9 +46,10 @@
   transform-origin: 0 0;
 }
 
+/* 자리와 크기는 노드가 놓인 범위에 맞춰 그때그때 정한다 */
 .mm-edges {
   position: absolute;
-  inset: 0;
+  overflow: visible;
   pointer-events: none;
 }
 
@@ -113,6 +124,50 @@
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   pointer-events: none;
+}
+
+.mm-edit {
+  width: 100%;
+  margin-bottom: 0.35rem;
+  font-size: 0.88rem;
+  line-height: 1.35;
+  resize: none;
+}
+
+.mm-edit-hint {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.mm-ask {
+  position: absolute;
+  left: 50%;
+  bottom: 1rem;
+  transform: translateX(-50%);
+  max-width: min(30rem, calc(100% - 1.5rem));
+  padding: 0.7rem 0.9rem;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  z-index: 30;
+}
+
+.mm-ask p {
+  margin: 0 0 0.55rem;
+  font-size: 0.88rem;
+}
+
+.mm-ask-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.mm-toast {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
 }
 
 .mm-zoom {
