@@ -26,12 +26,185 @@
   align-items: center;
 }
 
+.fc-tabs {
+  display: flex;
+  gap: 0.25rem;
+  margin-right: 0.35rem;
+}
+
 .fc-body {
   flex: 1;
   display: grid;
   place-items: center;
   padding: 1.5rem;
   overflow: auto;
+}
+
+/* 전체 보기 — 발췌 순서대로 번호를 붙인 카드 판 */
+.fc-list-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 1rem 1.25rem 2rem;
+}
+
+.fc-filters {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.9rem;
+}
+
+.fc-list-hint {
+  margin-left: auto;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.fc-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 0.7rem;
+  align-items: start;
+}
+
+.fc-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.7rem 0.8rem 0.8rem;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: var(--radius-sm);
+  transition: border-color 0.12s ease;
+}
+
+/* 정답이 비어 있는 카드는 왼쪽 띠로 알린다 */
+.fc-tile.blank {
+  border-left-color: var(--accent);
+}
+
+.fc-tile:hover {
+  border-color: var(--border-strong);
+}
+
+/* 고르는 카드는 한 줄을 다 써서 원문과 정답을 함께 펼친다 */
+.fc-tile.open {
+  grid-column: 1 / -1;
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow);
+}
+
+/* 닫힌 카드는 어디를 눌러도 열린다 */
+.fc-tile-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.fc-tile-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+}
+
+.fc-num {
+  min-width: 1.9rem;
+  padding: 0.05rem 0.3rem;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.fc-spot {
+  flex: none;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 문서 제목은 자리가 없으면 줄여서 보인다 */
+.fc-tile-loc {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.fc-flag {
+  margin-left: auto;
+  flex: none;
+  padding: 0.05rem 0.35rem;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.72rem;
+}
+
+.fc-flag + .fc-flag {
+  margin-left: 0;
+}
+
+.fc-flag.due {
+  background: rgba(125, 206, 160, 0.18);
+  color: #7dcea0;
+}
+
+.fc-tile-text {
+  display: -webkit-box;
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.fc-tile-text.full {
+  display: block;
+  white-space: pre-wrap;
+}
+
+.fc-tile-answer {
+  display: -webkit-box;
+  margin: 0;
+  padding-top: 0.4rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.85rem;
+  line-height: 1.4;
+  color: var(--text-muted);
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.fc-tile-open {
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border);
+}
+
+.fc-tile-links {
+  display: flex;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
 }
 
 .fc-card {
@@ -64,6 +237,12 @@
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-muted);
+}
+
+/* 문서 제목은 원문 그대로 읽혀야 해서 대문자 변형을 풀어 둔다 */
+.fc-where {
+  text-transform: none;
+  letter-spacing: 0;
 }
 
 .fc-back-head {

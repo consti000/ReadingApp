@@ -8,8 +8,9 @@ import {
   type Grade,
 } from 'ts-fsrs'
 import { v4 as uuid } from 'uuid'
+import { EpubCFI } from 'epubjs'
 import { db } from '@/lib/db'
-import type { Flashcard } from '@/types'
+import type { DocumentFormat, Flashcard, Highlight } from '@/types'
 
 const scheduler = fsrs(generatorParameters({ enable_fuzz: true, maximum_interval: 365 }))
 
@@ -122,9 +123,112 @@ export async function clearEchoedAnswers(projectId: string): Promise<number> {
   return echoed.length
 }
 
-export async function getDueFlashcards(projectId: string, now = Date.now()): Promise<Flashcard[]> {
-  const all = await db.flashcards.where('projectId').equals(projectId).toArray()
-  return all.filter((f) => f.due <= now).sort((a, b) => a.due - b.due)
+export interface FlashcardListItem {
+  card: Flashcard
+  /** 원문 발췌 순서 번호 (1부터) */
+  order: number
+  documentId?: string
+  documentTitle: string
+  /** 원문으로 옮겨 갈 때 쓴다 */
+  highlightId?: string
+  /** PDF 는 쪽 번호, EPUB 는 장(챕터) 번호 */
+  pageIndex?: number
+  format: DocumentFormat
+  hasAnswer: boolean
+  due: boolean
+}
+
+const cfiTool = new EpubCFI()
+
+/** 페이지 안에서 발췌가 시작하는 자리 (0~1 비율) */
+function startOf(hl: Highlight): { top: number; left: number } {
+  let top = Infinity
+  let left = Infinity
+  for (const r of hl.rects) {
+    if (r.top < top - 0.004) {
+      top = r.top
+      left = r.left
+    } else if (Math.abs(r.top - top) <= 0.004 && r.left < left) {
+      left = r.left
+    }
+  }
+  return { top: top === Infinity ? 0 : top, left: left === Infinity ? 0 : left }
+}
+
+/** 한 문서 안에서 어느 발췌가 앞에 오는지 */
+function comparePlace(a: Highlight, b: Highlight, epub: boolean): number {
+  if (a.pageIndex !== b.pageIndex) return a.pageIndex - b.pageIndex
+  if (epub && a.cfi && b.cfi) {
+    try {
+      const c = cfiTool.compare(a.cfi, b.cfi)
+      if (c) return c
+    } catch {
+      // 형식이 깨진 CFI 는 아래 좌표·시각 비교로 넘긴다
+    }
+  }
+  const pa = startOf(a)
+  const pb = startOf(b)
+  if (Math.abs(pa.top - pb.top) > 0.004) return pa.top - pb.top
+  if (Math.abs(pa.left - pb.left) > 0.004) return pa.left - pb.left
+  return a.createdAt - b.createdAt
+}
+
+/**
+ * 모든 카드를 원문 발췌 순서대로 늘어놓고 번호를 붙인다.
+ * 문서는 프로젝트에 들인 순서, 문서 안에서는 쪽·줄 순서를 따른다.
+ * 원문을 찾지 못한 카드(하이라이트가 지워진 경우)는 뒤에 붙인다.
+ */
+export async function listFlashcardsByExcerpt(
+  projectId: string,
+  now = Date.now(),
+): Promise<FlashcardListItem[]> {
+  const [cards, nodes, highlights, docs] = await Promise.all([
+    db.flashcards.where('projectId').equals(projectId).toArray(),
+    db.nodes.where('projectId').equals(projectId).toArray(),
+    db.highlights.where('projectId').equals(projectId).toArray(),
+    db.documents.where('projectId').equals(projectId).toArray(),
+  ])
+
+  const docRank = new Map(
+    [...docs]
+      .sort((a, b) => a.createdAt - b.createdAt || a.title.localeCompare(b.title))
+      .map((d, i) => [d.id, i] as const),
+  )
+  const docById = new Map(docs.map((d) => [d.id, d] as const))
+  const nodeById = new Map(nodes.map((n) => [n.id, n] as const))
+  const highlightById = new Map(highlights.map((h) => [h.id, h] as const))
+
+  const rows = cards.map((card) => {
+    const node = nodeById.get(card.nodeId)
+    const doc = node ? docById.get(node.documentId) : undefined
+    const highlight = node ? highlightById.get(node.sourceHighlightId) : undefined
+    return { card, doc, highlight }
+  })
+
+  const LAST = Number.MAX_SAFE_INTEGER
+  rows.sort((a, b) => {
+    const ra = a.doc ? (docRank.get(a.doc.id) ?? LAST) : LAST
+    const rb = b.doc ? (docRank.get(b.doc.id) ?? LAST) : LAST
+    if (ra !== rb) return ra - rb
+    if (a.highlight && b.highlight) {
+      return comparePlace(a.highlight, b.highlight, (a.doc?.format ?? 'pdf') === 'epub')
+    }
+    if (a.highlight) return -1
+    if (b.highlight) return 1
+    return a.card.createdAt - b.card.createdAt
+  })
+
+  return rows.map((r, i) => ({
+    card: r.card,
+    order: i + 1,
+    documentId: r.doc?.id,
+    documentTitle: r.doc?.title ?? '원문 없음',
+    highlightId: r.highlight?.id,
+    pageIndex: r.highlight?.pageIndex,
+    format: r.doc?.format ?? 'pdf',
+    hasAnswer: Boolean(r.card.back.trim()),
+    due: r.card.due <= now,
+  }))
 }
 
 export async function reviewFlashcard(cardId: string, rating: Grade): Promise<Flashcard | null> {
@@ -137,17 +241,6 @@ export async function reviewFlashcard(cardId: string, rating: Grade): Promise<Fl
   const updated = fromFsrsCard(row, item.card)
   await db.flashcards.put(updated)
   return updated
-}
-
-export async function getReviewStats(projectId: string) {
-  const cards = await db.flashcards.where('projectId').equals(projectId).toArray()
-  const now = Date.now()
-  const due = cards.filter((c) => c.due <= now).length
-  const learning = cards.filter((c) => c.state === State.Learning || c.state === State.Relearning).length
-  const review = cards.filter((c) => c.state === State.Review).length
-  const newCount = cards.filter((c) => c.state === State.New).length
-  const noAnswer = cards.filter((c) => !c.back.trim()).length
-  return { total: cards.length, due, learning, review, newCount, noAnswer }
 }
 
 export async function exportAnkiTsv(projectId: string): Promise<Blob> {

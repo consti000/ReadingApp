@@ -120,6 +120,22 @@ a {
   transform: scale(0.98);
 }
 
+/* 누를 수 없는 버튼은 눈으로도 구분되게 흐리게 둔다 */
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn:disabled:hover {
+  background: var(--bg-soft);
+  border-color: var(--border);
+}
+
+.btn-primary:disabled:hover {
+  background: var(--accent);
+  border-color: transparent;
+}
+
 .btn-primary {
   background: var(--accent);
   color: #1a1510;
