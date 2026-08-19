@@ -16,6 +16,7 @@ import type { AnchorPort, HighlightAnchor } from '@/lib/highlightAnchors'
 import { caretAt, intersectRanges, rangeBetween, type CaretPoint } from '@/lib/textRange'
 import { isSameSpot } from '@/lib/highlightOverlap'
 import { ColorPalette } from '@/components/ColorPalette'
+import { BookmarkControls, type BookmarkPlace } from '@/components/BookmarkPanel'
 import {
   HIGHLIGHT_COLORS,
   isUnderlineColor,
@@ -98,6 +99,7 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
   const viewerRef = useRef<HTMLDivElement>(null)
   const bookRef = useRef<Book | null>(null)
   const renditionRef = useRef<Rendition | null>(null)
+  const placeRef = useRef<BookmarkPlace>({ pageIndex: 0, label: '' })
   const highlightsRef = useRef<Highlight[]>([])
   /** 이미 rendition에 붙인 하이라이트: cfi → color */
   const appliedRef = useRef<Map<string, HighlightColor>>(new Map())
@@ -508,7 +510,8 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
     setAtStart(Boolean(loc.atStart) && startPage <= 1)
     setAtEnd(Boolean(loc.atEnd) && endPage >= endTotal)
 
-    const spineIndex = (loc.start.index ?? 0) + 1
+    const pageIndex = loc.start.index ?? 0
+    const spineIndex = pageIndex + 1
     const cfi = loc.start.cfi
     const locations = bookRef.current?.locations as unknown as
       | {
@@ -524,16 +527,20 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
         const raw = Number(locations?.locationFromCfi?.(cfi) ?? 0) + 1
         const current = Math.min(total, Math.max(1, raw))
         const ratio = locations?.percentageFromCfi?.(cfi) ?? current / total
+        const label = `${current} / ${total}`
         setProgress(Math.min(100, Math.max(0, Math.round(ratio * 100))))
-        setLocationLabel(`${current} / ${total}`)
+        setLocationLabel(label)
+        placeRef.current = { pageIndex, cfi, label }
         return
       } catch {
         // fall through to spine label
       }
     }
 
+    const sectionLabel = `섹션 ${spineIndex}`
     setProgress(0)
-    setLocationLabel(`섹션 ${spineIndex}`)
+    setLocationLabel(sectionLabel)
+    placeRef.current = { pageIndex, cfi, label: sectionLabel }
   }, [])
 
   const applyFontSize = useCallback(async (scale: number) => {
@@ -853,11 +860,23 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
   }, [fontScale, ready, applyFontSize])
 
   useEffect(() => {
-    if (!pendingJump || pendingJump.documentId !== documentId || !highlights) return
+    if (!pendingJump || pendingJump.documentId !== documentId) return
+    if (pendingJump.bookmarkId) {
+      if (!ready) return
+      const id = pendingJump.bookmarkId
+      setPendingJump(null)
+      void db.bookmarks.get(id).then((bm) => {
+        if (!bm) return
+        if (bm.cfi) void renditionRef.current?.display(bm.cfi)
+        else void renditionRef.current?.display(bm.pageIndex)
+      })
+      return
+    }
+    if (!pendingJump.highlightId || !highlights) return
     const target = highlights.find((x) => x.id === pendingJump.highlightId)
     setPendingJump(null)
     if (target?.cfi) void renditionRef.current?.display(target.cfi)
-  }, [pendingJump, documentId, highlights, setPendingJump])
+  }, [pendingJump, documentId, highlights, ready, setPendingJump])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -939,6 +958,19 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
             다음 페이지 →
           </button>
         </div>
+        <BookmarkControls
+          projectId={projectId}
+          documentId={documentId}
+          getPlace={() => {
+            const place = placeRef.current
+            if (!place.cfi && !place.label) return null
+            return place
+          }}
+          onJump={(bm) => {
+            if (bm.cfi) void renditionRef.current?.display(bm.cfi)
+            else void renditionRef.current?.display(bm.pageIndex)
+          }}
+        />
         {toc.length > 0 && (
           <select
             className="input epub-toc"

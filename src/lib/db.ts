@@ -12,6 +12,7 @@ import type {
   FlashcardDeck,
   Flashcard,
   BibliographyEntry,
+  Bookmark,
   PenStroke,
 } from '@/types'
 
@@ -28,6 +29,7 @@ class ReadLinkDB extends Dexie {
   flashcardDecks!: EntityTable<FlashcardDeck, 'id'>
   flashcards!: EntityTable<Flashcard, 'id'>
   bibliography!: EntityTable<BibliographyEntry, 'id'>
+  bookmarks!: EntityTable<Bookmark, 'id'>
   penStrokes!: EntityTable<PenStroke, 'id'>
 
   constructor() {
@@ -56,6 +58,22 @@ class ReadLinkDB extends Dexie {
       bibliography: 'id, projectId, citeKey',
       penStrokes: 'id, documentId, projectId, pageIndex',
     })
+    this.version(3).stores({
+      projects: 'id, name, updatedAt',
+      documents: 'id, projectId, title, citeKey, updatedAt',
+      highlights: 'id, documentId, projectId, pageIndex, createdAt',
+      nodes: 'id, projectId, documentId, sourceHighlightId, updatedAt',
+      workspaces: 'id, projectId, updatedAt',
+      cardPlacements: 'id, workspaceId, nodeId, [workspaceId+nodeId]',
+      inkLinks: 'id, workspaceId, fromNodeId, toNodeId',
+      mindMaps: 'id, projectId, updatedAt',
+      mindMapNodes: 'id, mindMapId, nodeId, parentId',
+      flashcardDecks: 'id, projectId, updatedAt',
+      flashcards: 'id, deckId, projectId, nodeId, due',
+      bibliography: 'id, projectId, citeKey',
+      bookmarks: 'id, documentId, projectId, createdAt',
+      penStrokes: 'id, documentId, projectId, pageIndex',
+    })
   }
 }
 
@@ -74,6 +92,7 @@ const TABLES = [
   'flashcardDecks',
   'flashcards',
   'bibliography',
+  'bookmarks',
   'penStrokes',
 ] as const
 

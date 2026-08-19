@@ -10,8 +10,14 @@ interface UiState {
   setPenColor: (c: string) => void
   readerTool: ReaderTool
   setReaderTool: (t: ReaderTool) => void
-  pendingJump: { documentId: string; highlightId: string } | null
-  setPendingJump: (j: { documentId: string; highlightId: string } | null) => void
+  pendingJump: {
+    documentId: string
+    highlightId?: string
+    bookmarkId?: string
+  } | null
+  setPendingJump: (
+    j: { documentId: string; highlightId?: string; bookmarkId?: string } | null,
+  ) => void
   /** 카드↔본문 연결선을 강조할 대상 */
   activeHighlightId: string | null
   setActiveHighlightId: (id: string | null) => void

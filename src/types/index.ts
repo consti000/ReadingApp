@@ -161,6 +161,19 @@ export interface BibliographyEntry {
   createdAt: number
 }
 
+/** 문서 속 한 자리에 단 책갈피 */
+export interface Bookmark {
+  id: string
+  documentId: string
+  projectId: string
+  /** PDF 는 쪽(0부터), EPUB 은 장(spine) 번호 */
+  pageIndex: number
+  /** EPUB Canonical Fragment Identifier — PDF 에는 없음 */
+  cfi?: string
+  label: string
+  createdAt: number
+}
+
 /** PDF 페이지 위 자유 필기 스트로크 */
 export interface PenStroke {
   id: string

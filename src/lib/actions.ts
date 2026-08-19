@@ -6,7 +6,7 @@ import {
   documentOpfsPath,
   detectFormat,
 } from '@/lib/opfs'
-import type { HighlightColor, Rect } from '@/types'
+import type { Bookmark, HighlightColor, Rect } from '@/types'
 
 export async function createProject(name: string, description?: string) {
   const now = Date.now()
@@ -53,6 +53,7 @@ export async function deleteProject(id: string) {
       db.flashcardDecks,
       db.flashcards,
       db.bibliography,
+      db.bookmarks,
       db.penStrokes,
     ],
     async () => {
@@ -72,6 +73,7 @@ export async function deleteProject(id: string) {
       await db.mindMaps.where('projectId').equals(id).delete()
       await db.flashcardDecks.where('projectId').equals(id).delete()
       await db.bibliography.where('projectId').equals(id).delete()
+      await db.bookmarks.where('projectId').equals(id).delete()
       await db.penStrokes.where('projectId').equals(id).delete()
       await db.workspaces.where('projectId').equals(id).delete()
       await db.nodes.where('projectId').equals(id).delete()
@@ -112,13 +114,14 @@ export async function deleteDocument(documentId: string) {
   const nodes = await db.nodes.where('documentId').equals(documentId).toArray()
   await db.transaction(
     'rw',
-    [db.documents, db.highlights, db.nodes, db.cardPlacements],
+    [db.documents, db.highlights, db.nodes, db.cardPlacements, db.bookmarks],
     async () => {
       for (const n of nodes) {
         await db.cardPlacements.where('nodeId').equals(n.id).delete()
       }
       await db.nodes.where('documentId').equals(documentId).delete()
       await db.highlights.where('documentId').equals(documentId).delete()
+      await db.bookmarks.where('documentId').equals(documentId).delete()
       await db.documents.delete(documentId)
     },
   )
@@ -351,4 +354,44 @@ export async function deleteLastPenStroke(documentId: string) {
   strokes.sort((a, b) => a.createdAt - b.createdAt)
   const stroke = strokes[strokes.length - 1]
   await db.penStrokes.delete(stroke.id)
+}
+
+function samePlace(a: { pageIndex: number; cfi?: string }, b: { pageIndex: number; cfi?: string }) {
+  if (a.cfi || b.cfi) return Boolean(a.cfi) && a.cfi === b.cfi
+  return a.pageIndex === b.pageIndex
+}
+
+/** 지금 보고 있는 자리에 책갈피를 단다. 이미 있으면 그 책갈피를 돌려준다. */
+export async function createBookmark(params: {
+  documentId: string
+  projectId: string
+  pageIndex: number
+  cfi?: string
+  label: string
+}): Promise<{ bookmark: Bookmark; created: boolean }> {
+  const existing = await db.bookmarks.where('documentId').equals(params.documentId).toArray()
+  const hit = existing.find((b) => samePlace(b, params))
+  if (hit) return { bookmark: hit, created: false }
+
+  const bookmark: Bookmark = {
+    id: uuid(),
+    documentId: params.documentId,
+    projectId: params.projectId,
+    pageIndex: params.pageIndex,
+    cfi: params.cfi,
+    label: params.label.trim() || `${params.pageIndex + 1}쪽`,
+    createdAt: Date.now(),
+  }
+  await db.bookmarks.add(bookmark)
+  return { bookmark, created: true }
+}
+
+export async function renameBookmark(id: string, label: string): Promise<void> {
+  const text = label.trim()
+  if (!text) return
+  await db.bookmarks.update(id, { label: text })
+}
+
+export async function deleteBookmark(id: string): Promise<void> {
+  await db.bookmarks.delete(id)
 }

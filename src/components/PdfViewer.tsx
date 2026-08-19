@@ -29,6 +29,7 @@ import { HighlightEditMenu } from '@/components/HighlightEditMenu'
 import type { AnchorPort, HighlightAnchor } from '@/lib/highlightAnchors'
 import { caretAt, rangeBetween, scopeOf, type CaretPoint } from '@/lib/textRange'
 import { ColorPalette } from '@/components/ColorPalette'
+import { BookmarkControls } from '@/components/BookmarkPanel'
 import {
   HIGHLIGHT_COLORS,
   HIGHLIGHT_OPACITY,
@@ -384,13 +385,23 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
   }, [documentId])
 
   useEffect(() => {
-    if (!pendingJump || pendingJump.documentId !== documentId || !highlights) return
+    if (!pendingJump || pendingJump.documentId !== documentId) return
+    if (pendingJump.bookmarkId) {
+      if (!pdf) return
+      const id = pendingJump.bookmarkId
+      setPendingJump(null)
+      void db.bookmarks.get(id).then((bm) => {
+        if (bm) goToPage(bm.pageIndex)
+      })
+      return
+    }
+    if (!pendingJump.highlightId || !highlights) return
     const h = highlights.find((x) => x.id === pendingJump.highlightId)
     if (!h) return
     const el = containerRef.current?.querySelector(`[data-page="${h.pageIndex}"]`)
     el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
     setPendingJump(null)
-  }, [pendingJump, documentId, highlights, setPendingJump])
+  }, [pendingJump, documentId, highlights, pdf, goToPage, setPendingJump])
 
   /*
    * 하이라이트 사각형은 텍스트 레이어 아래에 있어 클릭을 직접 받지 못한다.
@@ -754,6 +765,12 @@ export function PdfViewer({ documentId, projectId, workspaceId, anchorPort }: Pr
             다음 페이지 →
           </button>
         </div>
+        <BookmarkControls
+          projectId={projectId}
+          documentId={documentId}
+          getPlace={() => ({ pageIndex: pageNow, label: `${pageNow + 1}쪽` })}
+          onJump={(bm) => goToPage(bm.pageIndex)}
+        />
         <span className="pdf-hint">
           {readerTool === 'pen'
             ? 'S펜 압력 필기 · 손가락으로 넘기기 · 펜 버튼 누르고 긋거나 손가락 길게 누르면 하이라이트'

@@ -3,6 +3,7 @@ import { Link, useParams, useNavigate } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/lib/db'
 import { addDocument, deleteDocument, createWorkspace } from '@/lib/actions'
+import { BookmarkPanel } from '@/components/BookmarkPanel'
 import { ensureDefaultMindMap } from '@/lib/mindmap'
 import './ProjectPage.css'
 
@@ -11,6 +12,7 @@ export function ProjectPage() {
   const navigate = useNavigate()
   const fileRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
+  const [bookmarkOpen, setBookmarkOpen] = useState(false)
 
   const project = useLiveQuery(
     () => (projectId ? db.projects.get(projectId) : undefined),
@@ -119,6 +121,9 @@ export function ProjectPage() {
           <Link className="btn" to={`/project/${projectId}/bibliography`}>
             참고문헌
           </Link>
+          <button className="btn" onClick={() => setBookmarkOpen(true)}>
+            책갈피
+          </button>
         </div>
       </header>
 
@@ -188,6 +193,11 @@ export function ProjectPage() {
           ))}
         </ul>
       </section>
+      <BookmarkPanel
+        projectId={projectId}
+        open={bookmarkOpen}
+        onClose={() => setBookmarkOpen(false)}
+      />
     </div>
   )
 }
