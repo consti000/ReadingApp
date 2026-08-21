@@ -9,9 +9,14 @@ import { PaneDivider } from '@/components/PaneDivider'
 import { addNodeToWorkspace, deleteHighlight, updateHighlightColor } from '@/lib/actions'
 import type { AnchorPort, AnchorProvider } from '@/lib/highlightAnchors'
 import { clamp, useMediaQuery, usePaneSize } from '@/lib/panes'
+import { sortHighlightsByPlace } from '@/lib/highlightOrder'
 import { useUiStore } from '@/store/uiStore'
 import { HIGHLIGHT_COLORS } from '@/types'
 import './ReadPage.css'
+
+/** 손가락이 주 입력인 기기 — 카드를 떠나도 연결선을 바로 지우지 않는다 */
+const COARSE_POINTER =
+  typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches === true
 
 /** 카드 왼쪽 변에서 선이 붙는 높이 */
 const CARD_ANCHOR_OFFSET = 18
@@ -83,6 +88,12 @@ export function ReadPage() {
   const nodes = useLiveQuery(
     () => (documentId ? db.nodes.where('documentId').equals(documentId).toArray() : []),
     [documentId],
+  )
+
+  const isEpubDoc = (doc?.format ?? 'pdf') === 'epub'
+  const orderedHighlights = useMemo(
+    () => sortHighlightsByPlace(highlights ?? [], isEpubDoc),
+    [highlights, isEpubDoc],
   )
 
   /**
@@ -179,7 +190,7 @@ export function ReadPage() {
 
   useEffect(() => {
     schedule()
-  }, [highlights, schedule])
+  }, [highlights, orderedHighlights, schedule])
 
   /** 창 폭에 따라 사이드바가 넓힐 수 있는 한계가 달라진다 */
   const widthLimit = useCallback(() => {
@@ -307,11 +318,11 @@ export function ReadPage() {
 
         <aside className="read-sidebar" ref={sidebarRef}>
           <h3>하이라이트</h3>
-          {!highlights?.length ? (
+          {!orderedHighlights.length ? (
             <p className="muted">텍스트를 드래그해 하이라이트하세요</p>
           ) : (
             <ul className="hl-list">
-              {highlights.map((h) => {
+              {orderedHighlights.map((h) => {
                 const node = nodeByHighlight.get(h.id)
                 return (
                   <li
@@ -320,12 +331,17 @@ export function ReadPage() {
                     data-hl-card={h.id}
                     style={{ borderLeftColor: HIGHLIGHT_COLORS[h.color] }}
                     onMouseEnter={() => setActiveHighlightId(h.id)}
-                    onMouseLeave={() => setActiveHighlightId(null)}
+                    onMouseLeave={() => {
+                      if (!COARSE_POINTER) setActiveHighlightId(null)
+                    }}
                   >
                     <button
                       className="hl-item-text"
                       title="원문 위치로 이동"
-                      onClick={() => setPendingJump({ documentId, highlightId: h.id })}
+                      onClick={() => {
+                        setActiveHighlightId(h.id)
+                        setPendingJump({ documentId, highlightId: h.id })
+                      }}
                     >
                       {h.text}
                     </button>

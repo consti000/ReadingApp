@@ -15,10 +15,12 @@ import { HighlightEditMenu } from '@/components/HighlightEditMenu'
 import type { AnchorPort, HighlightAnchor } from '@/lib/highlightAnchors'
 import { caretAt, intersectRanges, rangeBetween, type CaretPoint } from '@/lib/textRange'
 import { isSameSpot } from '@/lib/highlightOverlap'
+import { clipBox, lineBoxesOfRange, type Box } from '@/lib/highlightRects'
 import { ColorPalette } from '@/components/ColorPalette'
 import { BookmarkControls, type BookmarkPlace } from '@/components/BookmarkPanel'
 import {
   HIGHLIGHT_COLORS,
+  HIGHLIGHT_OPACITY,
   isUnderlineColor,
   type Highlight,
   type HighlightColor,
@@ -54,8 +56,28 @@ interface EpubLocation {
   atEnd?: boolean
 }
 
-const HL_CLASS = 'readlink-hl'
-const UL_CLASS = 'readlink-ul'
+interface PaintedHighlight {
+  id: string
+  color: HighlightColor
+  rects: Box[]
+}
+
+function samePainted(a: PaintedHighlight[], b: PaintedHighlight[]) {
+  if (a.length !== b.length) return false
+  return a.every((p, i) => {
+    const q = b[i]
+    if (p.id !== q.id || p.color !== q.color || p.rects.length !== q.rects.length) return false
+    return p.rects.every((r, j) => {
+      const s = q.rects[j]
+      return (
+        Math.abs(r.left - s.left) < 0.5 &&
+        Math.abs(r.top - s.top) < 0.5 &&
+        Math.abs(r.width - s.width) < 0.5 &&
+        Math.abs(r.height - s.height) < 0.5
+      )
+    })
+  })
+}
 
 /** 탭/스와이프 판정 기준 — 드래그(텍스트 선택)와 구분하기 위한 값 */
 const TAP_MAX_MOVE_PX = 10
@@ -99,10 +121,11 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
   const viewerRef = useRef<HTMLDivElement>(null)
   const bookRef = useRef<Book | null>(null)
   const renditionRef = useRef<Rendition | null>(null)
+  const stageRef = useRef<HTMLDivElement>(null)
   const placeRef = useRef<BookmarkPlace>({ pageIndex: 0, label: '' })
   const highlightsRef = useRef<Highlight[]>([])
-  /** 이미 rendition에 붙인 하이라이트: cfi → color */
-  const appliedRef = useRef<Map<string, HighlightColor>>(new Map())
+  const paintRef = useRef<PaintedHighlight[]>([])
+  const paintRafRef = useRef(0)
   const initTokenRef = useRef(0)
   const fontScaleRef = useRef(100)
   const selectionRef = useRef<SelectionPayload | null>(null)
@@ -122,14 +145,15 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
   const [editing, setEditing] = useState<{ id: string; x: number; y: number } | null>(null)
   const [fontScale, setFontScale] = useState(100)
   /** 손끝을 따라 칠해질 자리 (뷰포트 좌표) */
-  const [markPreview, setMarkPreview] = useState<
-    { left: number; top: number; width: number; height: number }[] | null
-  >(null)
+  const [markPreview, setMarkPreview] = useState<Box[] | null>(null)
+  const [painted, setPainted] = useState<PaintedHighlight[]>([])
 
   const highlightColor = useUiStore((s) => s.highlightColor)
   const setHighlightColor = useUiStore((s) => s.setHighlightColor)
   const pendingJump = useUiStore((s) => s.pendingJump)
   const setPendingJump = useUiStore((s) => s.setPendingJump)
+  const activeHighlightId = useUiStore((s) => s.activeHighlightId)
+  const setActiveHighlightId = useUiStore((s) => s.setActiveHighlightId)
 
   const highlights = useLiveQuery(
     () => db.highlights.where('documentId').equals(documentId).toArray(),
@@ -147,8 +171,10 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
    */
   const highlightColorRef = useRef(highlightColor)
   const workspaceIdRef = useRef(workspaceId)
+  const setActiveHighlightIdRef = useRef(setActiveHighlightId)
   highlightColorRef.current = highlightColor
   workspaceIdRef.current = workspaceId
+  setActiveHighlightIdRef.current = setActiveHighlightId
 
   /*
    * epubjs 의 displayed.total 은 마지막 섹션에서 한 페이지 더 많게 나오는 경우가 있어
@@ -193,8 +219,8 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
   }, [getContentsList])
 
   /*
-   * 하이라이트는 iframe 위에 겹친 SVG 라 클릭을 받지 않는다(받으면 텍스트 선택이 막힌다).
-   * 대신 저장된 CFI 를 본문 Range 로 되돌려 탭 좌표가 그 안에 드는지 본다.
+   * 하이라이트 칠은 iframe 위 겹이 받으므로 클릭을 받지 않는다.
+   * 저장된 CFI 를 본문 Range 로 되돌려 탭 좌표가 그 안에 드는지 본다.
    */
   const hitTestHighlight = useCallback(
     (doc: Document, x: number, y: number): string | null => {
@@ -208,8 +234,9 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
         try {
           const range = contents.range(h.cfi)
           if (!range) continue
-          for (const r of range.getClientRects()) {
-            if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return h.id
+          for (const r of lineBoxesOfRange(range)) {
+            if (x >= r.left && x <= r.left + r.width && y >= r.top && y <= r.top + r.height)
+              return h.id
           }
         } catch {
           // 잘못된 CFI는 건너뜀
@@ -219,6 +246,9 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
     },
     [getContentsList],
   )
+
+  const hitTestRef = useRef(hitTestHighlight)
+  hitTestRef.current = hitTestHighlight
 
   /** 그은 구간을 CFI 로 바꿔 하이라이트로 남긴다 */
   const commitMark = useCallback(
@@ -326,14 +356,12 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
         if (!range || !frame) return setMarkPreview(null)
         const fr = frame.getBoundingClientRect()
         setMarkPreview(
-          Array.from(range.getClientRects())
-            .filter((r) => r.width > 0.5 && r.height > 0.5)
-            .map((r) => ({
-              left: fr.left + r.left,
-              top: fr.top + r.top,
-              width: r.width,
-              height: r.height,
-            })),
+          lineBoxesOfRange(range).map((r) => ({
+            left: fr.left + r.left,
+            top: fr.top + r.top,
+            width: r.width,
+            height: r.height,
+          })),
         )
       }
 
@@ -365,6 +393,16 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
         if (!range) return
         markRange = range
         showPreview(markRange)
+      })
+
+      // 본문 위를 지날 때 그 하이라이트와 카드를 잇는 선만 보여 준다
+      doc.addEventListener('pointermove', (e: PointerEvent) => {
+        if (markFrom) return
+        const id = hitTestRef.current(doc, e.clientX, e.clientY)
+        setActiveHighlightIdRef.current(id)
+      })
+      doc.documentElement.addEventListener('pointerleave', () => {
+        setActiveHighlightIdRef.current(null)
       })
 
       // 칠하기가 시작된 뒤에는 본문이 따라 흐르지 않아야 한다
@@ -435,6 +473,7 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
         // 기존 하이라이트를 탭하면 페이지를 넘기지 않고 편집 메뉴를 띄운다
         const hitId = hitTestHighlight(doc, e.clientX, e.clientY)
         if (hitId) {
+          setActiveHighlightIdRef.current(hitId)
           setEditing({
             id: hitId,
             x: frameRect.left + e.clientX,
@@ -452,53 +491,67 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
     [goNext, goPrev, hitTestHighlight, commitMark],
   )
 
-  /** DB 상태와 rendition 주석을 동기화 (추가/삭제/색상 변경 반영) */
-  const syncAnnotations = useCallback(() => {
-    const rendition = renditionRef.current
-    if (!rendition) return
+  /**
+   * epubjs 주석 SVG 는 iframe 좌표와 부모 좌표를 섞어 글자에서 어긋난다.
+   * 지금 보이는 쪽의 CFI 범위를 직접 재서, 본문 칸 위에 같은 좌표로 칠한다.
+   */
+  const paintHighlights = useCallback(() => {
+    const stage = stageRef.current
+    if (!stage) return
+    const stageRect = stage.getBoundingClientRect()
+    if (stageRect.width < 1 || stageRect.height < 1) return
 
-    const wanted = new Map<string, HighlightColor>()
-    for (const h of highlightsRef.current) {
-      if (h.cfi) wanted.set(h.cfi, h.color)
-    }
+    const clip: Box = { left: 0, top: 0, width: stageRect.width, height: stageRect.height }
+    const next: PaintedHighlight[] = []
 
-    for (const [cfi, color] of [...appliedRef.current]) {
-      if (wanted.get(cfi) === color) continue
-      try {
-        rendition.annotations.remove(cfi, isUnderlineColor(color) ? 'underline' : 'highlight')
-      } catch {
-        // 이미 사라진 주석
-      }
-      appliedRef.current.delete(cfi)
-    }
+    for (const contents of getContentsList()) {
+      const frame = contents.document?.defaultView?.frameElement as HTMLElement | null
+      if (!frame) continue
+      const frameRect = frame.getBoundingClientRect()
 
-    for (const h of highlightsRef.current) {
-      if (!h.cfi || appliedRef.current.has(h.cfi)) continue
-      try {
-        if (isUnderlineColor(h.color)) {
-          /*
-           * marks-pane 은 밑줄을 테두리 사각형 + 검은 실선으로 그린다.
-           * stroke 를 직접 주면 사각형까지 물들기 때문에 색만 넘기고 선은 CSS 에서 잡는다.
-           */
-          rendition.annotations.underline(h.cfi, { id: h.id }, undefined, UL_CLASS, {
-            color: HIGHLIGHT_COLORS[h.color],
-          })
-        } else {
-          /*
-           * 조각마다 반투명하게 칠하면 조각이 맞닿는 곳마다 색이 두 번 얹혀 진해진다.
-           * 조각은 원색으로 두고 진하기는 묶음(g) 에서 한 번만 준다 — CSS 가 맡는다.
-           */
-          rendition.annotations.highlight(h.cfi, { id: h.id }, undefined, HL_CLASS, {
-            fill: HIGHLIGHT_COLORS[h.color],
-            'fill-opacity': '1',
-          })
+      for (const h of highlightsRef.current) {
+        if (!h.cfi) continue
+        try {
+          const range = contents.range(h.cfi)
+          if (!range) continue
+          const rects: Box[] = []
+          for (const r of lineBoxesOfRange(range)) {
+            const box = clipBox(
+              {
+                left: frameRect.left + r.left - stageRect.left,
+                top: frameRect.top + r.top - stageRect.top,
+                width: r.width,
+                height: r.height,
+              },
+              clip,
+            )
+            if (box) rects.push(box)
+          }
+          if (rects.length) next.push({ id: h.id, color: h.color, rects })
+        } catch {
+          // 잘못된 CFI 는 건너뜀
         }
-        appliedRef.current.set(h.cfi, h.color)
-      } catch {
-        // 잘못된 CFI는 건너뜀
       }
     }
-  }, [])
+
+    paintRef.current = next
+    setPainted((prev) => (samePainted(prev, next) ? prev : next))
+  }, [getContentsList])
+
+  const schedulePaint = useCallback(() => {
+    if (paintRafRef.current) cancelAnimationFrame(paintRafRef.current)
+    let left = 4
+    const step = () => {
+      paintHighlights()
+      left -= 1
+      paintRafRef.current = left > 0 ? requestAnimationFrame(step) : 0
+      anchorPortRef.current?.invalidate()
+    }
+    paintRafRef.current = requestAnimationFrame(step)
+  }, [paintHighlights])
+
+  const schedulePaintRef = useRef(schedulePaint)
+  schedulePaintRef.current = schedulePaint
 
   const updateLocation = useCallback((loc: EpubLocation | null | undefined) => {
     if (!loc?.start) return
@@ -575,13 +628,13 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
       }
     }
     anchorPortRef.current?.invalidate()
+    schedulePaintRef.current()
   }, [])
 
   useEffect(() => {
     highlightsRef.current = highlights ?? []
-    syncAnnotations()
-    anchorPort?.invalidate()
-  }, [highlights, syncAnnotations, anchorPort])
+    schedulePaint()
+  }, [highlights, schedulePaint])
 
   useEffect(() => {
     if (editing && highlights && !highlights.some((h) => h.id === editing.id)) setEditing(null)
@@ -590,40 +643,26 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
   useEffect(() => {
     if (!anchorPort) return
     anchorPort.register(() => {
-      const mount = viewerRef.current
-      if (!mount) return null
-      const clip = mount.getBoundingClientRect()
+      const stage = stageRef.current
+      if (!stage) return null
+      const clip = stage.getBoundingClientRect()
       if (clip.width < 1 || clip.height < 1) return null
 
       const anchors = new Map<string, HighlightAnchor>()
-      for (const contents of getContentsList()) {
-        const frame = contents.document?.defaultView?.frameElement as HTMLElement | null
-        if (!frame) continue
-        const frameRect = frame.getBoundingClientRect()
-
-        for (const h of highlightsRef.current) {
-          if (!h.cfi) continue
-          try {
-            const range = contents.range(h.cfi)
-            if (!range) continue
-            let best: HighlightAnchor | null = null
-            for (const r of range.getClientRects()) {
-              const x = frameRect.left + r.right
-              const y = frameRect.top + r.top + r.height / 2
-              // 페이지 방식에서는 화면 밖 컬럼도 좌표를 갖는다 → 보이는 영역만 남긴다
-              if (x < clip.left || x > clip.right || y < clip.top || y > clip.bottom) continue
-              if (!best || y > best.y) best = { x, y }
-            }
-            if (best) anchors.set(h.id, best)
-          } catch {
-            // 잘못된 CFI는 건너뜀
-          }
+      for (const p of paintRef.current) {
+        let best: HighlightAnchor | null = null
+        for (const r of p.rects) {
+          const x = clip.left + r.left + r.width
+          const y = clip.top + r.top + r.height / 2
+          if (x < clip.left || x > clip.right || y < clip.top || y > clip.bottom) continue
+          if (!best || y > best.y) best = { x, y }
         }
+        if (best) anchors.set(p.id, best)
       }
       return { clip, anchors }
     })
     return () => anchorPort.register(null)
-  }, [anchorPort, getContentsList])
+  }, [anchorPort])
 
   useEffect(() => {
     const token = ++initTokenRef.current
@@ -639,6 +678,8 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
     const destroyLocal = () => {
       if (rafId) cancelAnimationFrame(rafId)
       rafId = 0
+      if (paintRafRef.current) cancelAnimationFrame(paintRafRef.current)
+      paintRafRef.current = 0
       observer?.disconnect()
       observer = null
       try {
@@ -661,7 +702,8 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
     setLocationLabel('')
     setAtStart(false)
     setAtEnd(false)
-    appliedRef.current = new Map()
+    paintRef.current = []
+    setPainted([])
 
     void (async () => {
       try {
@@ -724,7 +766,7 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
           setSelection(null)
           setSelMenu(null)
           setEditing(null)
-          anchorPortRef.current?.invalidate()
+          schedulePaintRef.current()
         })
 
         rendition.on('selected', (cfiRange: string, contents: Contents) => {
@@ -773,7 +815,7 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
               boundDocs.add(doc)
               bindContentGestures(doc)
             }
-            anchorPortRef.current?.invalidate()
+            schedulePaintRef.current()
           } catch {
             // ignore
           }
@@ -787,7 +829,7 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
 
         setLoading(false)
         setReady(true)
-        syncAnnotations()
+        schedulePaintRef.current()
         updateLocation(rendition.currentLocation() as unknown as EpubLocation)
 
         let lastW = width
@@ -811,7 +853,7 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
             } catch {
               // ignore
             }
-            anchorPortRef.current?.invalidate()
+            schedulePaintRef.current()
           })
         })
         observer.observe(mount)
@@ -852,7 +894,7 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
         renditionRef.current = null
       }
     }
-  }, [documentId, bindContentGestures, syncAnnotations, updateLocation])
+  }, [documentId, bindContentGestures, updateLocation])
 
   useEffect(() => {
     if (!ready) return
@@ -917,7 +959,7 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
     clearFrameSelection()
     setSelection(null)
     setSelMenu(null)
-    // 실제 렌더링은 highlights 구독 → syncAnnotations 에서 처리
+    // 실제 칠은 highlights 구독 → paintHighlights 에서 처리
   }
 
   return (
@@ -1003,8 +1045,43 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
       {loading && <div className="epub-status">EPUB 불러오는 중…</div>}
       {error && <div className="epub-status error">{error}</div>}
 
-      <div className="epub-stage">
+      <div className="epub-stage" ref={stageRef}>
         <div className="epub-frame" ref={viewerRef} />
+        <div className="epub-hl-layer" aria-hidden>
+          {painted.map((p) => (
+            <div
+              key={p.id}
+              className={`epub-hl-group ${isUnderlineColor(p.color) ? 'underline' : ''} ${
+                activeHighlightId === p.id ? 'active' : ''
+              }`}
+              style={{
+                opacity: isUnderlineColor(p.color)
+                  ? activeHighlightId === p.id
+                    ? 1
+                    : 0.9
+                  : activeHighlightId === p.id
+                    ? 0.72
+                    : HIGHLIGHT_OPACITY,
+              }}
+            >
+              {p.rects.map((r, i) => (
+                <div
+                  key={`${p.id}-${i}`}
+                  className={`epub-hl-rect ${isUnderlineColor(p.color) ? 'underline' : ''}`}
+                  style={{
+                    left: r.left,
+                    top: r.top,
+                    width: r.width,
+                    height: r.height,
+                    ...(isUnderlineColor(p.color)
+                      ? { borderBottomColor: HIGHLIGHT_COLORS[p.color] }
+                      : { background: HIGHLIGHT_COLORS[p.color] }),
+                  }}
+                />
+              ))}
+            </div>
+          ))}
+        </div>
       </div>
 
       {markPreview?.map((r, i) => (

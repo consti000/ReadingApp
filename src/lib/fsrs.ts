@@ -8,9 +8,9 @@ import {
   type Grade,
 } from 'ts-fsrs'
 import { v4 as uuid } from 'uuid'
-import { EpubCFI } from 'epubjs'
 import { db } from '@/lib/db'
-import type { DocumentFormat, Flashcard, Highlight } from '@/types'
+import { compareHighlightPlace } from '@/lib/highlightOrder'
+import type { DocumentFormat, Flashcard } from '@/types'
 
 const scheduler = fsrs(generatorParameters({ enable_fuzz: true, maximum_interval: 365 }))
 
@@ -138,41 +138,6 @@ export interface FlashcardListItem {
   due: boolean
 }
 
-const cfiTool = new EpubCFI()
-
-/** 페이지 안에서 발췌가 시작하는 자리 (0~1 비율) */
-function startOf(hl: Highlight): { top: number; left: number } {
-  let top = Infinity
-  let left = Infinity
-  for (const r of hl.rects) {
-    if (r.top < top - 0.004) {
-      top = r.top
-      left = r.left
-    } else if (Math.abs(r.top - top) <= 0.004 && r.left < left) {
-      left = r.left
-    }
-  }
-  return { top: top === Infinity ? 0 : top, left: left === Infinity ? 0 : left }
-}
-
-/** 한 문서 안에서 어느 발췌가 앞에 오는지 */
-function comparePlace(a: Highlight, b: Highlight, epub: boolean): number {
-  if (a.pageIndex !== b.pageIndex) return a.pageIndex - b.pageIndex
-  if (epub && a.cfi && b.cfi) {
-    try {
-      const c = cfiTool.compare(a.cfi, b.cfi)
-      if (c) return c
-    } catch {
-      // 형식이 깨진 CFI 는 아래 좌표·시각 비교로 넘긴다
-    }
-  }
-  const pa = startOf(a)
-  const pb = startOf(b)
-  if (Math.abs(pa.top - pb.top) > 0.004) return pa.top - pb.top
-  if (Math.abs(pa.left - pb.left) > 0.004) return pa.left - pb.left
-  return a.createdAt - b.createdAt
-}
-
 /**
  * 모든 카드를 원문 발췌 순서대로 늘어놓고 번호를 붙인다.
  * 문서는 프로젝트에 들인 순서, 문서 안에서는 쪽·줄 순서를 따른다.
@@ -211,7 +176,7 @@ export async function listFlashcardsByExcerpt(
     const rb = b.doc ? (docRank.get(b.doc.id) ?? LAST) : LAST
     if (ra !== rb) return ra - rb
     if (a.highlight && b.highlight) {
-      return comparePlace(a.highlight, b.highlight, (a.doc?.format ?? 'pdf') === 'epub')
+      return compareHighlightPlace(a.highlight, b.highlight, (a.doc?.format ?? 'pdf') === 'epub')
     }
     if (a.highlight) return -1
     if (b.highlight) return 1

@@ -20,6 +20,7 @@ import {
   deleteHighlight,
 } from '@/lib/actions'
 import { isSameSpot, rectsArea, rectsOverlapArea } from '@/lib/highlightOverlap'
+import { mergeLineRects } from '@/lib/highlightRects'
 import { usePaneSize } from '@/lib/panes'
 import { db } from '@/lib/db'
 import { useLiveQuery } from 'dexie-react-hooks'
@@ -79,46 +80,6 @@ const groupClass = (color: HighlightColor) =>
 const groupOpacity = (color: HighlightColor, active: boolean) => {
   if (isUnderlineColor(color)) return active ? 1 : 0.9
   return active ? 0.75 : HIGHLIGHT_OPACITY
-}
-
-interface Band {
-  left: number
-  top: number
-  right: number
-  bottom: number
-}
-
-/**
- * 한 줄에 놓인 조각들을 한 덩어리로 합친다.
- *
- * 글자 조각마다 사각형이 따로 나오고 조각끼리 조금씩 겹쳐 있어서, 그대로 칠하면
- * 이음매마다 색이 두 번 얹혀 진하게 보인다. 단 칸이 크게 벌어진 곳(다단 편집의 단 사이)은
- * 남겨 두어야 하므로 글자 높이만큼 이상 떨어진 조각은 합치지 않는다.
- */
-function mergeLineRects(rects: DOMRect[]): { left: number; top: number; width: number; height: number }[] {
-  const bands: Band[] = []
-  for (const r of [...rects].sort((a, b) => a.top - b.top || a.left - b.left)) {
-    const band = bands.find((b) => {
-      const shared = Math.min(b.bottom, r.bottom) - Math.max(b.top, r.top)
-      const sameLine = shared > Math.min(b.bottom - b.top, r.height) * 0.5
-      const gap = Math.max(b.left, r.left) - Math.min(b.right, r.right)
-      return sameLine && gap <= r.height
-    })
-    if (band) {
-      band.left = Math.min(band.left, r.left)
-      band.top = Math.min(band.top, r.top)
-      band.right = Math.max(band.right, r.right)
-      band.bottom = Math.max(band.bottom, r.bottom)
-    } else {
-      bands.push({ left: r.left, top: r.top, right: r.right, bottom: r.bottom })
-    }
-  }
-  return bands.map((b) => ({
-    left: b.left,
-    top: b.top,
-    width: b.right - b.left,
-    height: b.bottom - b.top,
-  }))
 }
 
 /** 그 위치가 놓인 페이지 */

@@ -39,11 +39,19 @@
 }
 
 .hl-connectors g {
-  opacity: 0.45;
   transition: opacity 0.12s ease;
 }
 
-.hl-connectors g.active {
+.hl-connectors g path {
+  opacity: 0;
+}
+
+.hl-connectors g circle {
+  opacity: 0.4;
+}
+
+.hl-connectors g.active path,
+.hl-connectors g.active circle {
   opacity: 1;
 }
 
