@@ -10,16 +10,8 @@ import {
   exportMindMapImage,
   exportMindMapOpml,
 } from '@/lib/mindmap'
+import { saveBlob } from '@/lib/download'
 import './MindMapPage.css'
-
-function download(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  a.click()
-  URL.revokeObjectURL(url)
-}
 
 export function MindMapPage() {
   const { projectId, mindMapId } = useParams<{ projectId: string; mindMapId: string }>()
@@ -100,7 +92,7 @@ export function MindMapPage() {
                   setToast('그릴 노드가 없습니다')
                   return
                 }
-                download(blob, `${mindMap.name}.png`)
+                await saveBlob(blob, `${mindMap.name}.png`)
               } finally {
                 setBusy(false)
                 setTimeout(() => setToast(null), 2500)
@@ -112,7 +104,7 @@ export function MindMapPage() {
           <button
             className="btn btn-sm"
             onClick={async () => {
-              download(await exportMindMapOpml(mindMapId), `${mindMap.name}.opml`)
+              await saveBlob(await exportMindMapOpml(mindMapId), `${mindMap.name}.opml`)
             }}
           >
             OPML 내보내기

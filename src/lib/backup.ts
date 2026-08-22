@@ -1,5 +1,6 @@
 import JSZip from 'jszip'
 import { exportDbJson, importDbJson, db } from '@/lib/db'
+import { beginSave, finishSave } from '@/lib/download'
 import {
   readAllDocuments,
   writeAllDocuments,
@@ -14,29 +15,33 @@ export async function exportBackup(): Promise<Blob> {
   zip.file(
     'meta.json',
     JSON.stringify({ version: META_VERSION, exportedAt: Date.now(), app: 'readlink' }, null, 2),
+    { compression: 'DEFLATE' },
   )
-  zip.file('db.json', JSON.stringify(data))
+  zip.file('db.json', JSON.stringify(data), { compression: 'DEFLATE' })
 
   const files = await readAllDocuments()
   const folder = zip.folder('documents')
   if (folder) {
     for (const [, { blob, filename }] of files) {
-      folder.file(filename, blob)
+      // PDF·EPUB 은 이미 압축돼 있어 다시 줄이면 시간만 늘고 용량은 거의 그대로다
+      folder.file(filename, blob, { compression: 'STORE' })
     }
   }
 
-  return zip.generateAsync({ type: 'blob', compression: 'DEFLATE' })
+  return zip.generateAsync({ type: 'blob' })
 }
 
 export async function downloadBackup(): Promise<void> {
-  const blob = await exportBackup()
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
   const date = new Date().toISOString().slice(0, 10)
-  a.href = url
-  a.download = `readlink-backup-${date}.zip`
-  a.click()
-  URL.revokeObjectURL(url)
+  const filename = `readlink-backup-${date}.zip`
+  // ZIP 을 만들기 전에 저장 자리를 잡는다. 오래 걸리면 클릭 제스처가 사라져
+  // 저장 대화상자가 막히고, 예전처럼 끊긴 다운로드만 남을 수 있다.
+  const session = await beginSave(filename, {
+    description: 'ReadLink 백업',
+    accept: { 'application/zip': ['.zip'] },
+  })
+  const blob = await exportBackup()
+  await finishSave(session, blob)
 }
 
 export async function importBackup(file: File): Promise<{ documents: number; projects: number }> {

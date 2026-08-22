@@ -9,6 +9,7 @@ import {
 } from 'ts-fsrs'
 import { v4 as uuid } from 'uuid'
 import { db } from '@/lib/db'
+import { saveBlob } from '@/lib/download'
 import { compareHighlightPlace } from '@/lib/highlightOrder'
 import type { DocumentFormat, Flashcard } from '@/types'
 
@@ -222,10 +223,5 @@ export async function exportAnkiTsv(projectId: string): Promise<Blob> {
 
 export async function downloadAnkiExport(projectId: string): Promise<void> {
   const blob = await exportAnkiTsv(projectId)
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `readlink-anki-${new Date().toISOString().slice(0, 10)}.txt`
-  a.click()
-  URL.revokeObjectURL(url)
+  await saveBlob(blob, `readlink-anki-${new Date().toISOString().slice(0, 10)}.txt`)
 }

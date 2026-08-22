@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom'
 import { db } from '@/lib/db'
 import { createProject, deleteProject } from '@/lib/actions'
 import { downloadBackup, importBackup } from '@/lib/backup'
+import { isSaveCanceled } from '@/lib/download'
 import { estimateStorage } from '@/lib/opfs'
 import './LibraryPage.css'
 
@@ -41,6 +42,7 @@ export function LibraryPage() {
       await downloadBackup()
       setToast('백업 파일을 저장했습니다')
     } catch (e) {
+      if (isSaveCanceled(e)) return
       setToast(e instanceof Error ? e.message : '백업 실패')
     } finally {
       setBusy(false)
