@@ -79,7 +79,7 @@ class ReadLinkDB extends Dexie {
 
 export const db = new ReadLinkDB()
 
-const TABLES = [
+export const TABLES = [
   'projects',
   'documents',
   'highlights',

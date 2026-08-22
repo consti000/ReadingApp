@@ -35,13 +35,13 @@ export async function renameProject(id: string, name: string) {
   await db.projects.update(id, { name, updatedAt: Date.now() })
 }
 
-export async function deleteProject(id: string) {
-  const docs = await db.documents.where('projectId').equals(id).toArray()
+/** 프로젝트 안의 문서·발췌·카드만 지운다. 프로젝트 칸 자체는 남긴다. */
+export async function wipeProjectContents(projectId: string): Promise<void> {
+  const docs = await db.documents.where('projectId').equals(projectId).toArray()
   for (const d of docs) await deleteDocumentFile(d.id, d.format ?? 'pdf')
   await db.transaction(
     'rw',
     [
-      db.projects,
       db.documents,
       db.highlights,
       db.nodes,
@@ -57,31 +57,32 @@ export async function deleteProject(id: string) {
       db.penStrokes,
     ],
     async () => {
-      const ws = await db.workspaces.where('projectId').equals(id).toArray()
+      const ws = await db.workspaces.where('projectId').equals(projectId).toArray()
       for (const w of ws) {
         await db.cardPlacements.where('workspaceId').equals(w.id).delete()
         await db.inkLinks.where('workspaceId').equals(w.id).delete()
       }
-      const mms = await db.mindMaps.where('projectId').equals(id).toArray()
+      const mms = await db.mindMaps.where('projectId').equals(projectId).toArray()
       for (const m of mms) {
         await db.mindMapNodes.where('mindMapId').equals(m.id).delete()
       }
-      const decks = await db.flashcardDecks.where('projectId').equals(id).toArray()
-      for (const d of decks) {
-        await db.flashcards.where('deckId').equals(d.id).delete()
-      }
-      await db.mindMaps.where('projectId').equals(id).delete()
-      await db.flashcardDecks.where('projectId').equals(id).delete()
-      await db.bibliography.where('projectId').equals(id).delete()
-      await db.bookmarks.where('projectId').equals(id).delete()
-      await db.penStrokes.where('projectId').equals(id).delete()
-      await db.workspaces.where('projectId').equals(id).delete()
-      await db.nodes.where('projectId').equals(id).delete()
-      await db.highlights.where('projectId').equals(id).delete()
-      await db.documents.where('projectId').equals(id).delete()
-      await db.projects.delete(id)
+      await db.flashcards.where('projectId').equals(projectId).delete()
+      await db.mindMaps.where('projectId').equals(projectId).delete()
+      await db.flashcardDecks.where('projectId').equals(projectId).delete()
+      await db.bibliography.where('projectId').equals(projectId).delete()
+      await db.bookmarks.where('projectId').equals(projectId).delete()
+      await db.penStrokes.where('projectId').equals(projectId).delete()
+      await db.workspaces.where('projectId').equals(projectId).delete()
+      await db.nodes.where('projectId').equals(projectId).delete()
+      await db.highlights.where('projectId').equals(projectId).delete()
+      await db.documents.where('projectId').equals(projectId).delete()
     },
   )
+}
+
+export async function deleteProject(id: string) {
+  await wipeProjectContents(id)
+  await db.projects.delete(id)
 }
 
 export async function addDocument(projectId: string, file: File) {

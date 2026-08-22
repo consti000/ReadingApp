@@ -6,12 +6,14 @@ import { createProject, deleteProject } from '@/lib/actions'
 import { downloadBackup, importBackup } from '@/lib/backup'
 import { isSaveCanceled } from '@/lib/download'
 import { estimateStorage } from '@/lib/opfs'
+import type { Project } from '@/types'
 import './LibraryPage.css'
 
 export function LibraryPage() {
   const projects = useLiveQuery(() => db.projects.orderBy('updatedAt').reverse().toArray(), [])
   const docs = useLiveQuery(() => db.documents.toArray(), [])
   const [showNew, setShowNew] = useState(false)
+  const [exportPick, setExportPick] = useState(false)
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
   const [storage, setStorage] = useState<{ usage: number; quota: number } | null>(null)
@@ -36,11 +38,12 @@ export function LibraryPage() {
     }
   }
 
-  const handleExport = async () => {
+  const runExport = async (project: Project) => {
+    setExportPick(false)
     setBusy(true)
     try {
-      await downloadBackup()
-      setToast('백업 파일을 저장했습니다')
+      await downloadBackup(project.id, project.name)
+      setToast(`「${project.name}」백업을 저장했습니다`)
     } catch (e) {
       if (isSaveCanceled(e)) return
       setToast(e instanceof Error ? e.message : '백업 실패')
@@ -50,12 +53,34 @@ export function LibraryPage() {
     }
   }
 
+  const handleExport = () => {
+    if (!projects?.length) {
+      setToast('내보낼 프로젝트가 없습니다')
+      setTimeout(() => setToast(null), 3000)
+      return
+    }
+    if (projects.length === 1) {
+      void runExport(projects[0])
+      return
+    }
+    setExportPick(true)
+  }
+
   const handleImport = async (file: File) => {
-    if (!confirm('현재 데이터를 모두 덮어씁니다. 계속할까요?')) return
+    if (
+      !confirm(
+        '같은 이름 프로젝트는 그 내용만 바꾸고, 없는 프로젝트는 새로 넣습니다. 다른 프로젝트는 그대로 둡니다. 계속할까요?',
+      )
+    )
+      return
     setBusy(true)
     try {
       const r = await importBackup(file)
-      setToast(`복원 완료: 프로젝트 ${r.projects}개, 문서 ${r.documents}개`)
+      const bits = [
+        r.updated ? `갱신 ${r.updated}개` : '',
+        r.added ? `추가 ${r.added}개` : '',
+      ].filter(Boolean)
+      setToast(`복원 완료: ${bits.join(', ') || '변화 없음'} (문서 ${r.documents}개)`)
       await refreshStorage()
     } catch (e) {
       setToast(e instanceof Error ? e.message : '복원 실패')
@@ -164,6 +189,34 @@ export function LibraryPage() {
               </button>
               <button className="btn btn-primary" onClick={() => void handleCreate()} disabled={busy}>
                 만들기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {exportPick && (
+        <div className="modal-backdrop" onClick={() => setExportPick(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>내보낼 프로젝트</h3>
+            <p className="export-pick-hint">선택한 프로젝트만 ZIP 으로 저장합니다.</p>
+            <ul className="export-pick-list">
+              {(projects ?? []).map((p) => (
+                <li key={p.id}>
+                  <button
+                    className="btn export-pick-item"
+                    disabled={busy}
+                    onClick={() => void runExport(p)}
+                  >
+                    <span>{p.name}</span>
+                    <span className="export-pick-meta">문서 {docCount(p.id)}개</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <div className="modal-actions">
+              <button className="btn btn-ghost" onClick={() => setExportPick(false)}>
+                취소
               </button>
             </div>
           </div>
