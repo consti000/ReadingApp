@@ -15,6 +15,7 @@ import { HighlightEditMenu } from '@/components/HighlightEditMenu'
 import type { AnchorPort, HighlightAnchor } from '@/lib/highlightAnchors'
 import { caretAt, intersectRanges, rangeBetween, type CaretPoint } from '@/lib/textRange'
 import { isSameSpot } from '@/lib/highlightOverlap'
+import { clamp, usePaneSize } from '@/lib/panes'
 import { clipBox, lineBoxesOfRange, type Box } from '@/lib/highlightRects'
 import { ColorPalette } from '@/components/ColorPalette'
 import { BookmarkControls, type BookmarkPlace } from '@/components/BookmarkPanel'
@@ -91,6 +92,11 @@ const COARSE_POINTER =
 /** 제자리에서 이만큼 누르고 있으면 페이지 넘김이 아니라 하이라이트로 넘어간다 */
 const HOLD_TO_MARK_MS = 400
 
+/** 본문 폭 — 보기 칸 안에서만 줄이거나 넓힌다 (가장자리를 끄는 방식이 아님) */
+const PAGE_WIDTH_MIN = 50
+const PAGE_WIDTH_MAX = 100
+const PAGE_WIDTH_STEP = 10
+
 /** 좌우 가장자리 탭 영역 폭 */
 function edgeZoneWidth(viewportWidth: number): number {
   return viewportWidth < 640
@@ -144,6 +150,7 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
   const [selMenu, setSelMenu] = useState<{ x: number; y: number } | null>(null)
   const [editing, setEditing] = useState<{ id: string; x: number; y: number } | null>(null)
   const [fontScale, setFontScale] = useState(100)
+  const [pageWidth, , commitPageWidth] = usePaneSize('epub-page-width', PAGE_WIDTH_MAX)
   /** 손끝을 따라 칠해질 자리 (뷰포트 좌표) */
   const [markPreview, setMarkPreview] = useState<Box[] | null>(null)
   const [painted, setPainted] = useState<PaintedHighlight[]>([])
@@ -596,23 +603,22 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
     placeRef.current = { pageIndex, cfi, label: sectionLabel }
   }, [])
 
-  const applyFontSize = useCallback(async (scale: number) => {
+  /** 글자 크기·본문 폭이 바뀌면 조판을 다시 접고 읽던 자리를 지킨다 */
+  const relayout = useCallback(async (keepCfi?: string) => {
     const rendition = renditionRef.current
-    if (!rendition) return
+    const mount = viewerRef.current
+    if (!rendition || !mount) return
 
-    let cfi: string | undefined
-    try {
-      const loc = rendition.currentLocation() as unknown as EpubLocation
-      cfi = loc?.start?.cfi
-    } catch {
-      // ignore
+    let cfi = keepCfi
+    if (!cfi) {
+      try {
+        cfi = (rendition.currentLocation() as unknown as EpubLocation)?.start?.cfi
+      } catch {
+        // ignore
+      }
     }
 
-    // themes.fontSize()는 !important를 붙이지 않아 책 자체 CSS에 밀릴 수 있음
-    rendition.themes.override('font-size', `${scale}%`, true)
-
-    const mount = viewerRef.current
-    if (mount && mount.clientWidth > 0 && mount.clientHeight > 0) {
+    if (mount.clientWidth > 0 && mount.clientHeight > 0) {
       try {
         rendition.resize(mount.clientWidth, mount.clientHeight)
       } catch {
@@ -630,6 +636,17 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
     anchorPortRef.current?.invalidate()
     schedulePaintRef.current()
   }, [])
+
+  const applyFontSize = useCallback(
+    async (scale: number) => {
+      const rendition = renditionRef.current
+      if (!rendition) return
+      // themes.fontSize()는 !important를 붙이지 않아 책 자체 CSS에 밀릴 수 있음
+      rendition.themes.override('font-size', `${scale}%`, true)
+      await relayout()
+    },
+    [relayout],
+  )
 
   useEffect(() => {
     highlightsRef.current = highlights ?? []
@@ -902,6 +919,14 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
   }, [fontScale, ready, applyFontSize])
 
   useEffect(() => {
+    if (!ready) return
+    const id = requestAnimationFrame(() => {
+      void relayout()
+    })
+    return () => cancelAnimationFrame(id)
+  }, [pageWidth, ready, relayout])
+
+  useEffect(() => {
     if (!pendingJump || pendingJump.documentId !== documentId) return
     if (pendingJump.bookmarkId) {
       if (!ready) return
@@ -966,7 +991,7 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
     <div className="epub-viewer">
       <div className="epub-toolbar">
         <ColorPalette value={highlightColor} onPick={setHighlightColor} />
-        <div className="zoom-row">
+        <div className="zoom-row" title="글자 크기">
           <button
             className="btn btn-sm"
             disabled={!ready}
@@ -981,6 +1006,27 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
             onClick={() => setFontScale((s) => Math.min(180, s + 10))}
           >
             A+
+          </button>
+        </div>
+        <div className="zoom-row" title="본문 폭">
+          <button
+            className="btn btn-sm"
+            disabled={!ready || pageWidth <= PAGE_WIDTH_MIN}
+            onClick={() =>
+              commitPageWidth(clamp(pageWidth - PAGE_WIDTH_STEP, PAGE_WIDTH_MIN, PAGE_WIDTH_MAX))
+            }
+          >
+            폭−
+          </button>
+          <span>{pageWidth}%</span>
+          <button
+            className="btn btn-sm"
+            disabled={!ready || pageWidth >= PAGE_WIDTH_MAX}
+            onClick={() =>
+              commitPageWidth(clamp(pageWidth + PAGE_WIDTH_STEP, PAGE_WIDTH_MIN, PAGE_WIDTH_MAX))
+            }
+          >
+            폭+
           </button>
         </div>
         <div className="epub-nav">
@@ -1046,7 +1092,11 @@ export function EpubViewer({ documentId, projectId, workspaceId, anchorPort }: P
       {error && <div className="epub-status error">{error}</div>}
 
       <div className="epub-stage" ref={stageRef}>
-        <div className="epub-frame" ref={viewerRef} />
+        <div
+          className="epub-frame"
+          ref={viewerRef}
+          style={{ width: `${clamp(pageWidth, PAGE_WIDTH_MIN, PAGE_WIDTH_MAX)}%` }}
+        />
         <div className="epub-hl-layer" aria-hidden>
           {painted.map((p) => (
             <div

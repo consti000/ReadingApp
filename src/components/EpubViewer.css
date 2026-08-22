@@ -18,6 +18,15 @@
   flex-shrink: 0;
 }
 
+.zoom-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
 .epub-nav {
   display: flex;
   align-items: center;
@@ -61,13 +70,17 @@
   flex: 1;
   min-height: 0;
   display: flex;
-  background: #f7f4ef;
+  justify-content: center;
+  align-items: stretch;
+  background: #12151a;
 }
 
 .epub-frame {
-  flex: 1;
+  flex: 0 1 auto;
+  width: 100%;
   min-width: 0;
   min-height: 0;
+  height: 100%;
   background: #f7f4ef;
   overflow: hidden;
 }
